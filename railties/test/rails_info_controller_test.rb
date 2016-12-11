@@ -1,13 +1,8 @@
 require 'abstract_unit'
 require 'action_controller'
-require 'action_controller/testing/process'
 
 require 'rails/info'
 require 'rails/info_controller'
-
-ActionController::Routing::Routes.draw do |map|
-  map.connect ':controller/:action/:id'
-end
 
 module ActionController
   class Base
@@ -19,23 +14,26 @@ class InfoControllerTest < ActionController::TestCase
   tests Rails::InfoController
 
   def setup
-    @controller.stubs(:consider_all_requests_local => false, :local_request? => true)
+    ActionDispatch::Routing::Routes.draw do |map|
+      match ':controller/:action'
+    end
+    @controller.stubs(:consider_all_requests_local? => false, :local_request? => true)
   end
 
   test "info controller does not allow remote requests" do
-    @controller.stubs(:consider_all_requests_local => false, :local_request? => false)
+    @controller.stubs(:consider_all_requests_local? => false, :local_request? => false)
     get :properties
     assert_response :forbidden
   end
 
   test "info controller renders an error message when request was forbidden" do
-    @controller.stubs(:consider_all_requests_local => false, :local_request? => false)
+    @controller.stubs(:consider_all_requests_local? => false, :local_request? => false)
     get :properties
     assert_select 'p'
   end
 
   test "info controller allows requests when all requests are considered local" do
-    @controller.stubs(:consider_all_requests_local => true, :local_request? => false)
+    @controller.stubs(:consider_all_requests_local? => true, :local_request? => false)
     get :properties
     assert_response :success
   end

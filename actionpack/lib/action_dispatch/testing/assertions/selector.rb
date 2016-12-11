@@ -1,3 +1,5 @@
+require 'action_controller/vendor/html-scanner'
+
 #--
 # Copyright (c) 2006 Assaf Arkin (http://labnotes.org)
 # Under MIT and/or CC By license.
@@ -16,7 +18,7 @@ module ActionDispatch
     #
     # Use +css_select+ to select elements without making an assertions, either
     # from the response HTML or elements selected by the enclosing assertion.
-    # 
+    #
     # In addition to HTML responses, you can make the following assertions:
     # * +assert_select_rjs+ - Assertions on HTML content of RJS update and insertion operations.
     # * +assert_select_encoded+ - Assertions on HTML encoded inside XML, for example for dealing with feed item descriptions.
@@ -53,8 +55,8 @@ module ActionDispatch
       #   end
       #
       #   # Selects all list items in unordered lists
-      #   items = css_select("ul>li") 
-      #      
+      #   items = css_select("ul>li")
+      #
       #   # Selects all form tags and then all inputs inside the form
       #   forms = css_select("form")
       #   forms.each do |form|
@@ -212,7 +214,7 @@ module ActionDispatch
           # Otherwise just operate on the response document.
           root = response_from_page_or_rjs
         end
-        
+
         # First or second argument is the selector: string and we pass
         # all remaining arguments. Array and we pass the argument. Also
         # accepts selector itself.
@@ -225,7 +227,7 @@ module ActionDispatch
             selector = arg
           else raise ArgumentError, "Expecting a selector as the first argument"
         end
-        
+
         # Next argument is used for equality tests.
         equals = {}
         case arg = args.shift
@@ -315,10 +317,10 @@ module ActionDispatch
         # Returns all matches elements.
         matches
       end
-      
+
       def count_description(min, max) #:nodoc:
         pluralize = lambda {|word, quantity| word << (quantity == 1 ? '' : 's')}
-        
+
         if min && max && (max != min)
           "between #{min} and #{max} elements"
         elsif min && !(min == 1 && max == 1)
@@ -327,7 +329,7 @@ module ActionDispatch
           "at most #{max} #{pluralize['element', max]}"
         end
       end
-      
+
       # :call-seq:
       #   assert_select_rjs(id?) { |elements| ... }
       #   assert_select_rjs(statement, id?) { |elements| ... }
@@ -344,14 +346,17 @@ module ActionDispatch
       # that update or insert an element with that identifier.
       #
       # Use the first argument to narrow down assertions to only statements
-      # of that type. Possible values are <tt>:replace</tt>, <tt>:replace_html</tt>, 
-      # <tt>:show</tt>, <tt>:hide</tt>, <tt>:toggle</tt>, <tt>:remove</tt> and
-      # <tt>:insert_html</tt>.
+      # of that type. Possible values are <tt>:replace</tt>, <tt>:replace_html</tt>,
+      # <tt>:show</tt>, <tt>:hide</tt>, <tt>:toggle</tt>, <tt>:remove</tta>,
+      # <tt>:insert_html</tt> and <tt>:redirect</tt>.
       #
       # Use the argument <tt>:insert</tt> followed by an insertion position to narrow
       # down the assertion to only statements that insert elements in that
       # position. Possible values are <tt>:top</tt>, <tt>:bottom</tt>, <tt>:before</tt>
       # and <tt>:after</tt>.
+      #
+      # Use the argument <tt>:redirect</tt> follwed by a path to check that an statement
+      # which redirects to the specified path is generated.
       #
       # Using the <tt>:remove</tt> statement, you will be able to pass a block, but it will
       # be ignored as there is no HTML passed for this statement.
@@ -399,6 +404,9 @@ module ActionDispatch
       #
       #   # The same, but shorter.
       #   assert_select "ol>li", 4
+      #
+      #   # Checking for a redirect.
+      #   assert_select_rjs :redirect, root_path
       def assert_select_rjs(*args, &block)
         rjs_type = args.first.is_a?(Symbol) ? args.shift : nil
         id       = args.first.is_a?(String) ? args.shift : nil
@@ -488,7 +496,7 @@ module ActionDispatch
       #       end
       #     end
       #   end
-      #   
+      #
       #
       #   # Selects all paragraph tags from within the description of an RSS feed
       #   assert_select_feed :rss, 2.0 do
@@ -516,7 +524,7 @@ module ActionDispatch
 
         fix_content = lambda do |node|
           # Gets around a bug in the Rails 1.1 HTML parser.
-          node.content.gsub(/<!\[CDATA\[(.*)(\]\]>)?/m) { CGI.escapeHTML($1) }
+          node.content.gsub(/<!\[CDATA\[(.*)(\]\]>)?/m) { Rack::Utils.escapeHTML($1) }
         end
 
         selected = elements.map do |element|
@@ -576,7 +584,8 @@ module ActionDispatch
             :chained_replace      => "\\$\\(#{RJS_ANY_ID}\\)\\.replace\\(#{RJS_PATTERN_HTML}\\)",
             :chained_replace_html => "\\$\\(#{RJS_ANY_ID}\\)\\.update\\(#{RJS_PATTERN_HTML}\\)",
             :replace_html         => "Element\\.update\\(#{RJS_ANY_ID}, #{RJS_PATTERN_HTML}\\)",
-            :replace              => "Element\\.replace\\(#{RJS_ANY_ID}, #{RJS_PATTERN_HTML}\\)"
+            :replace              => "Element\\.replace\\(#{RJS_ANY_ID}, #{RJS_PATTERN_HTML}\\)",
+            :redirect             => "window.location.href = #{RJS_ANY_ID}"
           }
           [:remove, :show, :hide, :toggle].each do |action|
             RJS_STATEMENTS[action] = "Element\\.#{action}\\(#{RJS_ANY_ID}\\)"

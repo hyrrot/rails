@@ -21,27 +21,6 @@ class DelegatingAttributesTest < Test::Unit::TestCase
     @single_class = Class.new(Object)
   end
 
-  def test_simple_reader_declaration
-    single_class.superclass_delegating_reader   :only_reader
-    # The class and instance should have an accessor, but there
-    # should be no mutator
-    assert single_class.respond_to?(:only_reader)
-    assert single_class.respond_to?(:only_reader?)
-    assert single_class.public_instance_methods.map(&:to_s).include?("only_reader")
-    assert single_class.public_instance_methods.map(&:to_s).include?("only_reader?")
-    assert !single_class.respond_to?(:only_reader=)
-  end
-
-  def test_simple_writer_declaration
-    single_class.superclass_delegating_writer   :only_writer
-    # The class should have a mutator, the instances shouldn't
-    # neither should have an accessor
-    assert single_class.respond_to?(:only_writer=)
-    assert !single_class.public_instance_methods.include?("only_writer=")
-    assert !single_class.public_instance_methods.include?("only_writer")
-    assert !single_class.respond_to?(:only_writer)
-  end
-
   def test_simple_accessor_declaration
     single_class.superclass_delegating_accessor :both
     # Class should have accessor and mutator
@@ -50,6 +29,13 @@ class DelegatingAttributesTest < Test::Unit::TestCase
     assert single_class.respond_to?(:both=)
     assert single_class.public_instance_methods.map(&:to_s).include?("both")
     assert !single_class.public_instance_methods.map(&:to_s).include?("both=")
+  end
+
+  def test_simple_accessor_declaration_with_instance_reader_false
+    single_class.superclass_delegating_accessor :no_instance_reader, :instance_reader => false
+    assert single_class.respond_to?(:no_instance_reader)
+    assert single_class.respond_to?(:no_instance_reader=)
+    assert !single_class.public_instance_methods.map(&:to_s).include?("no_instance_reader")
   end
 
   def test_working_with_simple_attributes
@@ -65,19 +51,6 @@ class DelegatingAttributesTest < Test::Unit::TestCase
 
     single_class.both = false
     assert_equal false, single_class.both?
-  end
-
-  def test_working_with_accessors
-    single_class.superclass_delegating_reader   :only_reader
-    single_class.instance_variable_set("@only_reader", "reading only")
-    assert_equal "reading only", single_class.only_reader
-    assert_equal "reading only", single_class.new.only_reader
-  end
-
-  def test_working_with_simple_mutators
-    single_class.superclass_delegating_writer   :only_writer
-    single_class.only_writer="written"
-    assert_equal "written", single_class.instance_variable_get("@only_writer")
   end
 
   def test_child_class_delegates_to_parent_but_can_be_overridden
@@ -104,13 +77,15 @@ class DelegatingAttributesTest < Test::Unit::TestCase
   ensure
     Child.some_attribute=nil
   end
-  
+
   def test_delegation_stops_for_nil
     Mokopuna.some_attribute = nil
     Child.some_attribute="1"
-    
+
     assert_equal "1", Child.some_attribute
     assert_nil Mokopuna.some_attribute
+  ensure
+    Child.some_attribute=nil
   end
 
 end

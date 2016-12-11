@@ -8,7 +8,8 @@ module MysqlCompat #:nodoc:
     raise 'Mysql not loaded' unless defined?(::Mysql)
 
     target = defined?(Mysql::Result) ? Mysql::Result : MysqlRes
-    return if target.instance_methods.include?('all_hashes')
+    return if target.instance_methods.include?('all_hashes') ||
+              target.instance_methods.include?(:all_hashes)
 
     # Ruby driver has a version string and returns null values in each_hash
     # C driver >= 2.7 returns null values in each_hash
@@ -53,12 +54,7 @@ module ActiveRecord
       socket   = config[:socket]
       username = config[:username] ? config[:username].to_s : 'root'
       password = config[:password].to_s
-
-      if config.has_key?(:database)
-        database = config[:database]
-      else
-        raise ArgumentError, "No database specified. Missing argument: database."
-      end
+      database = config[:database]
 
       # Require the MySQL driver and define Mysql::Result.all_hashes
       unless defined? Mysql
@@ -69,19 +65,22 @@ module ActiveRecord
           raise
         end
       end
+
       MysqlCompat.define_all_hashes_method!
 
       mysql = Mysql.init
       mysql.ssl_set(config[:sslkey], config[:sslcert], config[:sslca], config[:sslcapath], config[:sslcipher]) if config[:sslca] || config[:sslkey]
 
-      ConnectionAdapters::MysqlAdapter.new(mysql, logger, [host, username, password, database, port, socket], config)
+      default_flags = Mysql.const_defined?(:CLIENT_MULTI_RESULTS) ? Mysql::CLIENT_MULTI_RESULTS : 0
+      options = [host, username, password, database, port, socket, default_flags]
+      ConnectionAdapters::MysqlAdapter.new(mysql, logger, options, config)
     end
   end
 
   module ConnectionAdapters
     class MysqlColumn < Column #:nodoc:
       def extract_default(default)
-        if type == :binary || type == :text
+        if sql_type =~ /blob/i || type == :text
           if default.blank?
             return null ? nil : ''
           else
@@ -95,7 +94,7 @@ module ActiveRecord
       end
 
       def has_default?
-        return false if type == :binary || type == :text #mysql forbids defaults on blob and text columns
+        return false if sql_type =~ /blob/i || type == :text #mysql forbids defaults on blob and text columns
         super
       end
 
@@ -212,7 +211,11 @@ module ActiveRecord
       def supports_migrations? #:nodoc:
         true
       end
-      
+
+      def supports_primary_key? #:nodoc:
+        true
+      end
+
       def supports_savepoints? #:nodoc:
         true
       end
@@ -318,7 +321,11 @@ module ActiveRecord
 
       # Executes a SQL query and returns a MySQL::Result object. Note that you have to free the Result object after you're done using it.
       def execute(sql, name = nil) #:nodoc:
-        log(sql, name) { @connection.query(sql) }
+        if name == :skip_logging
+          @connection.query(sql)
+        else
+          log(sql, name) { @connection.query(sql) }
+        end
       rescue ActiveRecord::StatementInvalid => exception
         if exception.message.split(":").first =~ /Packets out of order/
           raise ActiveRecord::StatementInvalid, "'Packets out of order' error was received from the database. Please update your mysql bindings (gem install mysql) and read http://dev.mysql.com/doc/mysql/en/password-hashing.html for more information.  If you're on Windows, use the Instant Rails installer to get the updated mysql bindings."
@@ -331,6 +338,7 @@ module ActiveRecord
         super sql, name
         id_value || @connection.insert_id
       end
+      alias :create :insert_sql
 
       def update_sql(sql, name = nil) #:nodoc:
         super
@@ -366,18 +374,6 @@ module ActiveRecord
       def release_savepoint
         execute("RELEASE SAVEPOINT #{current_savepoint_name}")
       end
-
-      def add_limit_offset!(sql, options) #:nodoc:
-        if limit = options[:limit]
-          limit = sanitize_limit(limit)
-          unless offset = options[:offset]
-            sql << " LIMIT #{limit}"
-          else
-            sql << " LIMIT #{offset.to_i}, #{limit}"
-          end
-        end
-      end
-
 
       # SCHEMA STATEMENTS ========================================
 
@@ -464,7 +460,7 @@ module ActiveRecord
       def columns(table_name, name = nil)#:nodoc:
         sql = "SHOW FIELDS FROM #{quote_table_name(table_name)}"
         columns = []
-        result = execute(sql, name)
+        result = execute(sql, :skip_logging)
         result.each { |field| columns << MysqlColumn.new(field[0], field[4], field[1], field[2] == "YES") }
         result.free
         columns
@@ -476,6 +472,13 @@ module ActiveRecord
 
       def rename_table(table_name, new_name)
         execute "RENAME TABLE #{quote_table_name(table_name)} TO #{quote_table_name(new_name)}"
+      end
+
+      def add_column(table_name, column_name, type, options = {})
+        add_column_sql = "ALTER TABLE #{quote_table_name(table_name)} ADD #{quote_column_name(column_name)} #{type_to_sql(type, options[:limit], options[:precision], options[:scale])}"
+        add_column_options!(add_column_sql, options)
+        add_column_position!(add_column_sql, options)
+        execute(add_column_sql)
       end
 
       def change_column_default(table_name, column_name, default) #:nodoc:
@@ -506,6 +509,7 @@ module ActiveRecord
 
         change_column_sql = "ALTER TABLE #{quote_table_name(table_name)} CHANGE #{quote_column_name(column_name)} #{quote_column_name(column_name)} #{type_to_sql(type, options[:limit], options[:precision], options[:scale])}"
         add_column_options!(change_column_sql, options)
+        add_column_position!(change_column_sql, options)
         execute(change_column_sql)
       end
 
@@ -537,6 +541,13 @@ module ActiveRecord
         end
       end
 
+      def add_column_position!(sql, options)
+        if options[:first]
+          sql << " FIRST"
+        elsif options[:after]
+          sql << " AFTER #{quote_column_name(options[:after])}"
+        end
+      end
 
       # SHOW VARIABLES LIKE 'name'
       def show_variable(name)
@@ -555,6 +566,12 @@ module ActiveRecord
         keys.length == 1 ? [keys.first, nil] : nil
       end
 
+      # Returns just a table's primary key
+      def primary_key(table)
+        pk_and_sequence = pk_and_sequence_for(table)
+        pk_and_sequence && pk_and_sequence.first
+      end
+
       def case_sensitive_equality_operator
         "= BINARY"
       end
@@ -566,6 +583,8 @@ module ActiveRecord
       protected
 
         def translate_exception(exception, message)
+          return super unless exception.respond_to?(:errno)
+
           case exception.errno
           when 1062
             RecordNotUnique.new(message, exception)
@@ -587,6 +606,10 @@ module ActiveRecord
             @connection.ssl_set(@config[:sslkey], @config[:sslcert], @config[:sslca], @config[:sslcapath], @config[:sslcipher])
           end
 
+          @connection.options(Mysql::OPT_CONNECT_TIMEOUT, @config[:connect_timeout]) if @config[:connect_timeout]
+          @connection.options(Mysql::OPT_READ_TIMEOUT, @config[:read_timeout]) if @config[:read_timeout]
+          @connection.options(Mysql::OPT_WRITE_TIMEOUT, @config[:write_timeout]) if @config[:write_timeout]
+
           @connection.real_connect(*@connection_options)
 
           # reconnect must be set after real_connect is called, because real_connect sets it to false internally
@@ -597,11 +620,11 @@ module ActiveRecord
 
         def configure_connection
           encoding = @config[:encoding]
-          execute("SET NAMES '#{encoding}'") if encoding
+          execute("SET NAMES '#{encoding}'", :skip_logging) if encoding
 
           # By default, MySQL 'where id is null' selects the last inserted id.
           # Turn this off. http://dev.rubyonrails.org/ticket/6778
-          execute("SET SQL_AUTO_IS_NULL=0")
+          execute("SET SQL_AUTO_IS_NULL=0", :skip_logging)
         end
 
         def select(sql, name = nil)

@@ -5,13 +5,6 @@ class CookieStoreTest < ActionController::IntegrationTest
   SessionKey = '_myapp_session'
   SessionSecret = 'b3c631c314c0bbca50c1b2843150fe33'
 
-  # Make sure Session middleware doesnt get included in the middleware stack
-  ActionController::Base.session_store = nil
-
-  DispatcherApp = ActionController::Dispatcher.new
-  CookieStoreApp = ActionDispatch::Session::CookieStore.new(DispatcherApp,
-                     :key => SessionKey, :secret => SessionSecret)
-
   Verifier = ActiveSupport::MessageVerifier.new(SessionSecret, 'SHA1')
   SignedBar = Verifier.generate(:foo => "bar", :session_id => ActiveSupport::SecureRandom.hex(16))
 
@@ -34,7 +27,7 @@ class CookieStoreTest < ActionController::IntegrationTest
     end
 
     def get_session_id
-      render :text => "foo: #{session[:foo].inspect}; id: #{request.session_options[:id]}"
+      render :text => "id: #{request.session_options[:id]}"
     end
 
     def call_reset_session
@@ -48,10 +41,6 @@ class CookieStoreTest < ActionController::IntegrationTest
     end
 
     def rescue_action(e) raise end
-  end
-
-  def setup
-    @integration_session = open_session(CookieStoreApp)
   end
 
   def test_raises_argument_error_if_missing_session_key
@@ -123,7 +112,7 @@ class CookieStoreTest < ActionController::IntegrationTest
 
       get '/get_session_id'
       assert_response :success
-      assert_equal "foo: \"bar\"; id: #{session_id}", response.body
+      assert_equal "id: #{session_id}", response.body
     end
   end
 
@@ -148,7 +137,7 @@ class CookieStoreTest < ActionController::IntegrationTest
     with_test_route_set do
       get '/no_session_access'
       assert_response :success
-      assert_equal "", headers['Set-Cookie']
+      assert_equal nil, headers['Set-Cookie']
     end
   end
 
@@ -158,7 +147,7 @@ class CookieStoreTest < ActionController::IntegrationTest
         "fef868465920f415f2c0652d6910d3af288a0367"
       get '/no_session_access'
       assert_response :success
-      assert_equal "", headers['Set-Cookie']
+      assert_equal nil, headers['Set-Cookie']
     end
   end
 
@@ -197,10 +186,7 @@ class CookieStoreTest < ActionController::IntegrationTest
   end
 
   def test_session_store_with_expire_after
-    app = ActionDispatch::Session::CookieStore.new(DispatcherApp, :key => SessionKey, :secret => SessionSecret, :expire_after => 5.hours)
-    @integration_session = open_session(app)
-
-    with_test_route_set do
+    with_test_route_set(:expire_after => 5.hours) do
       # First request accesses the session
       time = Time.local(2008, 4, 24)
       Time.stubs(:now).returns(time)
@@ -230,13 +216,13 @@ class CookieStoreTest < ActionController::IntegrationTest
   end
 
   private
-    def with_test_route_set
+    def with_test_route_set(options = {})
       with_routing do |set|
         set.draw do |map|
-          map.with_options :controller => "cookie_store_test/test" do |c|
-            c.connect "/:action"
-          end
+          match ':action', :to => ::CookieStoreTest::TestController
         end
+        options = {:key => SessionKey, :secret => SessionSecret}.merge(options)
+        @app = ActionDispatch::Session::CookieStore.new(set, options)
         yield
       end
     end

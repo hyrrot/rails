@@ -1,6 +1,4 @@
-require 'active_support/core_ext/time'
-require 'active_support/core_ext/date'
-require 'active_support/core_ext/date_time'
+require 'active_support/core_ext/object/blank'
 
 # The TimeZone class serves as a wrapper around TZInfo::Timezone instances. It allows us to do the following:
 #
@@ -57,13 +55,13 @@ module ActiveSupport
         "Newfoundland"                 => "America/St_Johns",
         "Brasilia"                     => "America/Sao_Paulo",
         "Buenos Aires"                 => "America/Argentina/Buenos_Aires",
-        "Georgetown"                   => "America/Argentina/San_Juan",
+        "Georgetown"                   => "America/Guyana",
         "Greenland"                    => "America/Godthab",
         "Mid-Atlantic"                 => "Atlantic/South_Georgia",
         "Azores"                       => "Atlantic/Azores",
         "Cape Verde Is."               => "Atlantic/Cape_Verde",
         "Dublin"                       => "Europe/Dublin",
-        "Edinburgh"                    => "Europe/Dublin",
+        "Edinburgh"                    => "Europe/London",
         "Lisbon"                       => "Europe/Lisbon",
         "London"                       => "Europe/London",
         "Casablanca"                   => "Africa/Casablanca",
@@ -174,7 +172,7 @@ module ActiveSupport
       MAPPING.freeze
     end
 
-    UTC_OFFSET_WITH_COLON = '%+03d:%02d'
+    UTC_OFFSET_WITH_COLON = '%s%02d:%02d'
     UTC_OFFSET_WITHOUT_COLON = UTC_OFFSET_WITH_COLON.sub(':', '')
 
     # Assumes self represents an offset from UTC in seconds (as returned from Time#utc_offset)
@@ -183,9 +181,10 @@ module ActiveSupport
     #   TimeZone.seconds_to_utc_offset(-21_600) # => "-06:00"
     def self.seconds_to_utc_offset(seconds, colon = true)
       format = colon ? UTC_OFFSET_WITH_COLON : UTC_OFFSET_WITHOUT_COLON
-      hours = seconds / 3600
+      sign = (seconds < 0 ? '-' : '+')
+      hours = seconds.abs / 3600
       minutes = (seconds.abs % 3600) / 60
-      format % [hours, minutes]
+      format % [sign, hours, minutes]
     end
 
     include Comparable
@@ -324,9 +323,9 @@ module ActiveSupport
        [-18_000, "Eastern Time (US & Canada)", "Indiana (East)", "Bogota",
                  "Lima", "Quito" ],
        [-16_200, "Caracas" ],
-       [-14_400, "Atlantic Time (Canada)", "La Paz", "Santiago" ],
+       [-14_400, "Atlantic Time (Canada)", "Georgetown", "La Paz", "Santiago" ],
        [-12_600, "Newfoundland" ],
-       [-10_800, "Brasilia", "Buenos Aires", "Georgetown", "Greenland" ],
+       [-10_800, "Brasilia", "Buenos Aires", "Greenland" ],
        [ -7_200, "Mid-Atlantic" ],
        [ -3_600, "Azores", "Cape Verde Is." ],
        [      0, "Dublin", "Edinburgh", "Lisbon", "London", "Casablanca",

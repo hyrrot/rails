@@ -35,53 +35,54 @@ class ShowExceptionsTest < ActionController::IntegrationTest
   DevelopmentApp = ActionDispatch::ShowExceptions.new(Boomer, true)
 
   test "rescue in public from a remote ip" do
-    @integration_session = open_session(ProductionApp)
+    @app = ProductionApp
     self.remote_addr = '208.77.188.166'
 
-    get "/"
+    get "/", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 500
     assert_equal "500 error fixture\n", body
 
-    get "/not_found"
+    get "/not_found", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 404
     assert_equal "404 error fixture\n", body
 
-    get "/method_not_allowed"
+    get "/method_not_allowed", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 405
     assert_equal "", body
   end
 
   test "rescue locally from a local request" do
-    @integration_session = open_session(ProductionApp)
-    self.remote_addr = '127.0.0.1'
+    @app = ProductionApp
+    ['127.0.0.1', '::1'].each do |ip_address|
+      self.remote_addr = ip_address
 
-    get "/"
-    assert_response 500
-    assert_match /puke/, body
+      get "/", {}, {'action_dispatch.show_exceptions' => true}
+      assert_response 500
+      assert_match /puke/, body
 
-    get "/not_found"
-    assert_response 404
-    assert_match /#{ActionController::UnknownAction.name}/, body
+      get "/not_found", {}, {'action_dispatch.show_exceptions' => true}
+      assert_response 404
+      assert_match /#{ActionController::UnknownAction.name}/, body
 
-    get "/method_not_allowed"
-    assert_response 405
-    assert_match /ActionController::MethodNotAllowed/, body
+      get "/method_not_allowed", {}, {'action_dispatch.show_exceptions' => true}
+      assert_response 405
+      assert_match /ActionController::MethodNotAllowed/, body
+    end
   end
 
   test "localize public rescue message" do
     # Change locale
-    old_locale = I18n.locale
-    I18n.locale = :da
+    old_locale, I18n.locale = I18n.locale, :da
 
     begin
-      @integration_session = open_session(ProductionApp)
+      @app = ProductionApp
       self.remote_addr = '208.77.188.166'
 
-      get "/"
+      get "/", {}, {'action_dispatch.show_exceptions' => true}
       assert_response 500
       assert_equal "500 localized error fixture\n", body
 
-      get "/not_found"
+      get "/not_found", {}, {'action_dispatch.show_exceptions' => true}
       assert_response 404
       assert_equal "404 error fixture\n", body
     ensure
@@ -90,18 +91,18 @@ class ShowExceptionsTest < ActionController::IntegrationTest
   end
 
   test "always rescue locally in development mode" do
-    @integration_session = open_session(DevelopmentApp)
+    @app = DevelopmentApp
     self.remote_addr = '208.77.188.166'
 
-    get "/"
+    get "/", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 500
     assert_match /puke/, body
 
-    get "/not_found"
+    get "/not_found", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 404
     assert_match /#{ActionController::UnknownAction.name}/, body
 
-    get "/method_not_allowed"
+    get "/method_not_allowed", {}, {'action_dispatch.show_exceptions' => true}
     assert_response 405
     assert_match /ActionController::MethodNotAllowed/, body
   end

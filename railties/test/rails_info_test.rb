@@ -1,12 +1,4 @@
-$:.unshift File.dirname(__FILE__) + "/../lib"
-$:.unshift File.dirname(__FILE__) + "/../builtin/rails_info"
-$:.unshift File.dirname(__FILE__) + "/../../activesupport/lib"
-$:.unshift File.dirname(__FILE__) + "/../../actionpack/lib"
-
-require 'test/unit'
-require 'active_support'
-require 'active_support/test_case'
-require 'action_controller'
+require 'abstract_unit'
 
 unless defined?(Rails) && defined?(Rails::Info)
   module Rails
@@ -77,11 +69,11 @@ EOS
     end
   end
 
-  def test_middleware_property
-    assert property_defined?('Middleware')
-  end
-
   def test_html_includes_middleware
+    Rails::Info.module_eval do
+      property 'Middleware', ['Rack::Lock', 'Rack::Static']
+    end
+
     html = Rails::Info.to_html
     assert html.include?('<tr><td class="name">Middleware</td>')
     properties.value_for('Middleware').each do |value|

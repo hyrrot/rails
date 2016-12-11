@@ -1,4 +1,5 @@
 require 'abstract_unit'
+require 'controller/fake_controllers'
 require 'action_controller/vendor/html-scanner'
 
 class SessionTest < Test::Unit::TestCase
@@ -198,6 +199,24 @@ class IntegrationTestTest < Test::Unit::TestCase
     assert_equal ::ActionController::Integration::Session, session2.class
     assert_not_equal session1, session2
   end
+
+  # RSpec mixes Matchers (which has a #method_missing) into
+  # IntegrationTest's superclass.  Make sure IntegrationTest does not
+  # try to delegate these methods to the session object.
+  def test_does_not_prevent_method_missing_passing_up_to_ancestors
+    mixin = Module.new do
+      def method_missing(name, *args)
+        name.to_s == 'foo' ? 'pass' : super
+      end
+    end
+    @test.class.superclass.__send__(:include, mixin)
+    begin
+      assert_equal 'pass', @test.foo
+    ensure
+      # leave other tests as unaffected as possible
+      mixin.__send__(:remove_method, :method_missing)
+    end
+  end
 end
 
 # Tests that integration tests don't call Controller test methods for processing.
@@ -233,6 +252,10 @@ class IntegrationProcessTest < ActionController::IntegrationTest
 
     def post
       render :text => "Created", :status => 201
+    end
+
+    def method
+      render :text => "method: #{request.method}"
     end
 
     def cookie_monster
@@ -360,23 +383,34 @@ class IntegrationProcessTest < ActionController::IntegrationTest
       head '/post'
       assert_equal 201, status
       assert_equal "", body
+
+      get '/get/method'
+      assert_equal 200, status
+      assert_equal "method: get", body
+
+      head '/get/method'
+      assert_equal 200, status
+      assert_equal "", body
     end
+  end
+
+  def test_generate_url_with_controller
+    assert_equal 'http://www.example.com/foo', url_for(:controller => "foo")
   end
 
   private
     def with_test_route_set
       with_routing do |set|
         set.draw do |map|
-          map.with_options :controller => "IntegrationProcessTest::Integration" do |c|
-            c.connect "/:action"
-          end
+          match ':action', :to => ::IntegrationProcessTest::IntegrationController
+          get 'get/:action', :to => ::IntegrationProcessTest::IntegrationController
         end
         yield
       end
     end
 end
 
-class MetalTest < ActionController::IntegrationTest
+class MetalIntegrationTest < ActionController::IntegrationTest
   class Poller
     def self.call(env)
       if env["PATH_INFO"] =~ /^\/success/
@@ -388,7 +422,7 @@ class MetalTest < ActionController::IntegrationTest
   end
 
   def setup
-    @integration_session = ActionController::Integration::Session.new(Poller)
+    @app = Poller
   end
 
   def test_successful_get
@@ -404,5 +438,9 @@ class MetalTest < ActionController::IntegrationTest
     assert_response 404
     assert_response :not_found
     assert_equal '', response.body
+  end
+
+  def test_generate_url_without_controller
+    assert_equal 'http://www.example.com/foo', url_for(:controller => "foo")
   end
 end

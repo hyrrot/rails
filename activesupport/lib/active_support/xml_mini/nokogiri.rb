@@ -1,4 +1,5 @@
 require 'nokogiri'
+require 'active_support/core_ext/object/blank'
 
 # = XmlMini Nokogiri implementation
 module ActiveSupport
@@ -12,7 +13,7 @@ module ActiveSupport
       if !data.respond_to?(:read)
         data = StringIO.new(data || '')
       end
-      
+
       char = data.getc
       if char.nil?
         {}
@@ -32,47 +33,41 @@ module ActiveSupport
       end
 
       module Node #:nodoc:
-        CONTENT_ROOT = '__content__'
+        CONTENT_ROOT = '__content__'.freeze
 
         # Convert XML document to hash
         #
         # hash::
         #   Hash to merge the converted element into.
-        def to_hash(hash = {})
-          hash[name] ||= attributes_as_hash
+        def to_hash(hash={})
+          node_hash = {}
 
-          walker = lambda { |memo, parent, child, callback|
-            next if child.blank? && 'file' != parent['type']
+          # Insert node hash into parent hash correctly.
+          case hash[name]
+            when Array then hash[name] << node_hash
+            when Hash  then hash[name] = [hash[name], node_hash]
+            when nil   then hash[name] = node_hash
+          end
 
-            if child.text?
-              (memo[CONTENT_ROOT] ||= '') << child.content
-              next
+          # Handle child elements
+          children.each do |c|
+            if c.element?
+              c.to_hash(node_hash)
+            elsif c.text? || c.cdata?
+              node_hash[CONTENT_ROOT] ||= ''
+              node_hash[CONTENT_ROOT] << c.content
             end
+          end
 
-            name = child.name
+          # Remove content node if it is blank and there are child tags
+          if node_hash.length > 1 && node_hash[CONTENT_ROOT].blank?
+            node_hash.delete(CONTENT_ROOT)
+          end
 
-            child_hash = child.attributes_as_hash
-            if memo[name]
-              memo[name] = [memo[name]].flatten
-              memo[name] << child_hash
-            else
-              memo[name] = child_hash
-            end
+          # Handle attributes
+          attribute_nodes.each { |a| node_hash[a.node_name] = a.value }
 
-            # Recursively walk children
-            child.children.each { |c|
-              callback.call(child_hash, child, c, callback)
-            }
-          }
-
-          children.each { |c| walker.call(hash[name], self, c, walker) }
           hash
-        end
-
-        def attributes_as_hash
-          Hash[*(attribute_nodes.map { |node|
-            [node.node_name, node.value]
-          }.flatten)]
         end
       end
     end

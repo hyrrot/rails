@@ -1,7 +1,10 @@
 require 'abstract_unit'
+require 'rbconfig'
 
-# Does awesome
-if ENV['CHILD']
+if defined?(MiniTest) || defined?(Test::Unit::TestResultFailureSupport)
+  $stderr.puts "Isolation tests can test test-unit 1 only"
+
+elsif ENV['CHILD']
   class ChildIsolationTest < ActiveSupport::TestCase
     include ActiveSupport::Testing::Isolation
 
@@ -56,15 +59,15 @@ if ENV['CHILD']
     end
 
     test "resets requires one" do
-      assert !defined?(OmgOmg)
-      assert_equal 0, $LOADED_FEATURES.grep(/fixtures\/omgomg/).size
-      require File.expand_path(File.join(File.dirname(__FILE__), "fixtures", "omgomg"))
+      assert !defined?(Custom)
+      assert_equal 0, $LOADED_FEATURES.grep(/fixtures\/custom/).size
+      require File.expand_path(File.join(File.dirname(__FILE__), "fixtures", "custom"))
     end
 
     test "resets requires two" do
-      assert !defined?(OmgOmg)
-      assert_equal 0, $LOADED_FEATURES.grep(/fixtures\/omgomg/).size
-      require File.expand_path(File.join(File.dirname(__FILE__), "fixtures", "omgomg"))
+      assert !defined?(Custom)
+      assert_equal 0, $LOADED_FEATURES.grep(/fixtures\/custom/).size
+      require File.expand_path(File.join(File.dirname(__FILE__), "fixtures", "custom"))
     end
   end
 else
@@ -73,13 +76,16 @@ else
     File.open(File.join(File.dirname(__FILE__), "fixtures", "isolation_test"), "w") {}
 
     ENV["CHILD"] = "1"
-    OUTPUT = `#{Gem.ruby} -I#{File.dirname(__FILE__)} #{File.expand_path(__FILE__)} -v`
+    OUTPUT = `#{RbConfig::CONFIG["bindir"]}/#{RbConfig::CONFIG["ruby_install_name"]} -I#{File.dirname(__FILE__)} "#{File.expand_path(__FILE__)}" -v`
     ENV.delete("CHILD")
 
     def setup
-      # Extract the results
+      defined?(::MiniTest) ? parse_minitest : parse_testunit
+    end
+
+    def parse_testunit
       @results = {}
-      OUTPUT[/Started\n\s*(.*)\s*\nFinished/mi, 1].split(/\s*\n\s*/).each do |result|
+      OUTPUT[/Started\n\s*(.*)\s*\nFinished/mi, 1].to_s.split(/\s*\n\s*/).each do |result|
         result =~ %r'^(\w+)\(\w+\):\s*(\.|E|F)$'
         @results[$1] = { 'E' => :error, '.' => :success, 'F' => :failure }[$2]
       end
@@ -93,16 +99,36 @@ else
       end
     end
 
+    def parse_minitest
+      @results = {}
+      OUTPUT[/Started\n\s*(.*)\s*\nFinished/mi, 1].to_s.split(/\s*\n\s*/).each do |result|
+        result =~ %r'^\w+#(\w+):.*:\s*(.*Assertion.*|.*RuntimeError.*|\.\s*)$'
+        val = :success
+        val = :error if $2.include?('RuntimeError')
+        val = :failure if $2.include?('Assertion')
+
+        @results[$1] = val
+      end
+
+      # Extract the backtraces
+      @backtraces = {}
+      OUTPUT.scan(/^\s*\d+\).*?\n\n/m).each do |backtrace|
+        # \n  1) Error:\ntest_captures_errors(ChildIsolationTest):
+        backtrace =~ %r'\s*\d+\)\s*(Error|Failure):\n(\w+)'i
+        @backtraces[$2] = { :type => $1, :output => backtrace }
+      end
+    end
+
     def assert_failing(name)
-      assert_equal :failure, @results[name.to_s], "Test #{name} did not fail"
+      assert_equal :failure, @results[name.to_s], "Test #{name} failed"
     end
 
     def assert_passing(name)
-      assert_equal :success, @results[name.to_s], "Test #{name} did not pass"
+      assert_equal :success, @results[name.to_s], "Test #{name} passed"
     end
 
     def assert_erroring(name)
-      assert_equal :error, @results[name.to_s], "Test #{name} did not error"
+      assert_equal :error, @results[name.to_s], "Test #{name} errored"
     end
 
     test "has all tests" do
@@ -139,12 +165,12 @@ else
 
     test "backtrace is printed for errors" do
       assert_equal 'Error', @backtraces["test_captures_errors"][:type]
-      assert_match %r{isolation_test.rb:\d+:in `test_captures_errors'}, @backtraces["test_captures_errors"][:output]
+      assert_match %r{isolation_test.rb:\d+}, @backtraces["test_captures_errors"][:output]
     end
 
     test "backtrace is printed for failures" do
       assert_equal 'Failure', @backtraces["test_captures_failures"][:type]
-      assert_match %r{isolation_test.rb:\d+:in `test_captures_failures'}, @backtraces["test_captures_failures"][:output]
+      assert_match %r{isolation_test.rb:\d+}, @backtraces["test_captures_failures"][:output]
     end
 
     test "self.setup is run only once" do

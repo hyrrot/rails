@@ -9,6 +9,20 @@ require 'models/mixed_case_monkey'
 class PrimaryKeysTest < ActiveRecord::TestCase
   fixtures :topics, :subscribers, :movies, :mixed_case_monkeys
 
+  def test_to_key_with_default_primary_key
+    topic = Topic.new
+    assert topic.to_key.nil?
+    topic = Topic.find(1)
+    assert_equal topic.to_key, [1]
+  end
+
+  def test_to_key_with_customized_primary_key
+    keyboard = Keyboard.new
+    assert keyboard.to_key.nil?
+    keyboard.save
+    assert_equal keyboard.to_key, [keyboard.id]
+  end
+
   def test_integer_key
     topic = Topic.find(1)
     assert_equal(topics(:first).author_name, topic.author_name)
@@ -97,5 +111,23 @@ class PrimaryKeysTest < ActiveRecord::TestCase
   end
   def test_instance_destroy_should_quote_pkey
     assert_nothing_raised { MixedCaseMonkey.find(1).destroy }
+  end
+
+  def test_supports_primary_key
+    assert_nothing_raised NoMethodError do
+      ActiveRecord::Base.connection.supports_primary_key?
+    end
+  end
+
+  def test_primary_key_returns_value_if_it_exists
+    if ActiveRecord::Base.connection.supports_primary_key?
+      assert_equal 'id', ActiveRecord::Base.connection.primary_key('developers')
+    end
+  end
+
+  def test_primary_key_returns_nil_if_it_does_not_exist
+    if ActiveRecord::Base.connection.supports_primary_key?
+      assert_nil ActiveRecord::Base.connection.primary_key('developers_projects')
+    end
   end
 end

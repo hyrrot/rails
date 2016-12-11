@@ -72,6 +72,34 @@ class RequestTest < ActiveSupport::TestCase
     assert_equal '9.9.9.9', request.remote_ip
   end
 
+  test "remote ip with user specified trusted proxies" do
+    ActionController::Base.trusted_proxies = /^67\.205\.106\.73$/i
+
+    request = stub_request 'REMOTE_ADDR' => '67.205.106.73',
+                           'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    assert_equal '3.4.5.6', request.remote_ip
+
+    request = stub_request 'REMOTE_ADDR' => '172.16.0.1,67.205.106.73',
+                           'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    assert_equal '3.4.5.6', request.remote_ip
+
+    request = stub_request 'REMOTE_ADDR' => '67.205.106.73,172.16.0.1',
+                           'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    assert_equal '3.4.5.6', request.remote_ip
+
+    request = stub_request 'REMOTE_ADDR' => '67.205.106.74,172.16.0.1',
+                           'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    assert_equal '67.205.106.74', request.remote_ip
+
+    request = stub_request 'HTTP_X_FORWARDED_FOR' => 'unknown,67.205.106.73'
+    assert_equal 'unknown', request.remote_ip
+
+    request = stub_request 'HTTP_X_FORWARDED_FOR' => '9.9.9.9, 3.4.5.6, 10.0.0.1, 67.205.106.73'
+    assert_equal '3.4.5.6', request.remote_ip
+
+    ActionController::Base.trusted_proxies = nil
+  end
+
   test "domains" do
     request = stub_request 'HTTP_HOST' => 'www.rubyonrails.org'
     assert_equal "rubyonrails.org", request.domain
@@ -291,7 +319,7 @@ class RequestTest < ActiveSupport::TestCase
   end
 
   test "allow method hacking on post" do
-    [:get, :head, :options, :put, :post, :delete].each do |method|
+    [:get, :options, :put, :post, :delete].each do |method|
       request = stub_request "REQUEST_METHOD" => method.to_s.upcase
       assert_equal(method == :head ? :get : method, request.method)
     end
@@ -313,7 +341,7 @@ class RequestTest < ActiveSupport::TestCase
   end
 
   test "head masquerading as get" do
-    request = stub_request 'REQUEST_METHOD' => 'HEAD'
+    request = stub_request 'REQUEST_METHOD' => 'GET', "rack.methodoverride.original_method" => "HEAD"
     assert_equal :get, request.method
     assert request.get?
     assert request.head?
@@ -338,17 +366,12 @@ class RequestTest < ActiveSupport::TestCase
   end
 
   test "XMLHttpRequest" do
-    begin
-      ActionController::Base.use_accept_header, old =
-        false, ActionController::Base.use_accept_header
-
-      request = stub_request 'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest'
-      request.expects(:parameters).at_least_once.returns({})
-      assert request.xhr?
-      assert_equal Mime::JS, request.format
-    ensure
-      ActionController::Base.use_accept_header = old
-    end
+    request = stub_request 'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest',
+                           'HTTP_ACCEPT' =>
+                             [Mime::JS, Mime::HTML, Mime::XML, 'text/xml', Mime::ALL].join(",")
+    request.expects(:parameters).at_least_once.returns({})
+    assert request.xhr?
+    assert_equal Mime::JS, request.format
   end
 
   test "content type" do
@@ -396,10 +419,105 @@ class RequestTest < ActiveSupport::TestCase
     assert_equal({"bar" => 2}, request.query_parameters)
   end
 
+  test "formats with accept header" do
+    request = stub_request 'HTTP_ACCEPT' => 'text/html'
+    request.expects(:parameters).at_least_once.returns({})
+    assert_equal [ Mime::HTML ], request.formats
+
+    request = stub_request 'CONTENT_TYPE' => 'application/xml; charset=UTF-8',
+                           'HTTP_X_REQUESTED_WITH' => "XMLHttpRequest"
+    request.expects(:parameters).at_least_once.returns({})
+    assert_equal with_set(Mime::XML), request.formats
+
+    request = stub_request
+    request.expects(:parameters).at_least_once.returns({ :format => :txt })
+    assert_equal with_set(Mime::TEXT), request.formats
+
+    request = stub_request
+    request.expects(:parameters).at_least_once.returns({ :format => :unknown })
+    assert request.formats.empty?
+  end
+
+  test "negotiate_mime" do
+    request = stub_request 'HTTP_ACCEPT' => 'text/html',
+                           'HTTP_X_REQUESTED_WITH' => "XMLHttpRequest"
+
+    request.expects(:parameters).at_least_once.returns({})
+
+    assert_equal nil, request.negotiate_mime([Mime::XML, Mime::JSON])
+    assert_equal Mime::HTML, request.negotiate_mime([Mime::XML, Mime::HTML])
+    assert_equal Mime::HTML, request.negotiate_mime([Mime::XML, Mime::ALL])
+
+    request = stub_request 'CONTENT_TYPE' => 'application/xml; charset=UTF-8',
+                           'HTTP_X_REQUESTED_WITH' => "XMLHttpRequest"
+    request.expects(:parameters).at_least_once.returns({})
+    assert_equal Mime::XML, request.negotiate_mime([Mime::XML, Mime::CSV])
+  end
+
+  test "process parameter filter" do
+    test_hashes = [
+    [{'foo'=>'bar'},{'foo'=>'bar'},%w'food'],
+    [{'foo'=>'bar'},{'foo'=>'[FILTERED]'},%w'foo'],
+    [{'foo'=>'bar', 'bar'=>'foo'},{'foo'=>'[FILTERED]', 'bar'=>'foo'},%w'foo baz'],
+    [{'foo'=>'bar', 'baz'=>'foo'},{'foo'=>'[FILTERED]', 'baz'=>'[FILTERED]'},%w'foo baz'],
+    [{'bar'=>{'foo'=>'bar','bar'=>'foo'}},{'bar'=>{'foo'=>'[FILTERED]','bar'=>'foo'}},%w'fo'],
+    [{'foo'=>{'foo'=>'bar','bar'=>'foo'}},{'foo'=>'[FILTERED]'},%w'f banana'],
+    [{'baz'=>[{'foo'=>'baz'}, "1"]}, {'baz'=>[{'foo'=>'[FILTERED]'}, "1"]}, [/foo/]]]
+
+    test_hashes.each do |before_filter, after_filter, filter_words|
+      request = stub_request('action_dispatch.parameter_filter' => filter_words)
+      assert_equal after_filter, request.send(:process_parameter_filter, before_filter)
+
+      filter_words << 'blah'
+      filter_words << lambda { |key, value|
+        value.reverse! if key =~ /bargain/
+      }
+
+      request = stub_request('action_dispatch.parameter_filter' => filter_words)
+      before_filter['barg'] = {'bargain'=>'gain', 'blah'=>'bar', 'bar'=>{'bargain'=>{'blah'=>'foo'}}}
+      after_filter['barg']  = {'bargain'=>'niag', 'blah'=>'[FILTERED]', 'bar'=>{'bargain'=>{'blah'=>'[FILTERED]'}}}
+
+      assert_equal after_filter, request.send(:process_parameter_filter, before_filter)
+    end
+  end
+
+  test "filtered_parameters returns params filtered" do
+    request = stub_request('action_dispatch.request.parameters' =>
+      { 'lifo' => 'Pratik', 'amount' => '420', 'step' => '1' },
+      'action_dispatch.parameter_filter' => [:lifo, :amount])
+
+    params = request.filtered_parameters
+    assert_equal "[FILTERED]", params["lifo"]
+    assert_equal "[FILTERED]", params["amount"]
+    assert_equal "1", params["step"]
+  end
+
+  test "filtered_env filters env as a whole" do
+    request = stub_request('action_dispatch.request.parameters' =>
+      { 'amount' => '420', 'step' => '1' }, "RAW_POST_DATA" => "yada yada",
+      'action_dispatch.parameter_filter' => [:lifo, :amount])
+
+    request = stub_request(request.filtered_env)
+
+    assert_equal "[FILTERED]", request.raw_post
+    assert_equal "[FILTERED]", request.params["amount"]
+    assert_equal "1", request.params["step"]
+  end
+
 protected
 
   def stub_request(env={})
     ActionDispatch::Request.new(env)
   end
 
+  def with_set(*args)
+    args
+  end
+
+  def with_accept_header(value)
+    ActionController::Base.use_accept_header, old = value, ActionController::Base.use_accept_header
+    yield
+  ensure
+    ActionController::Base.use_accept_header = old
+  end
 end

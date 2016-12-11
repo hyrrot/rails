@@ -1,4 +1,3 @@
-require 'action_view/erb/util'
 require 'set'
 
 module ActionView
@@ -8,7 +7,10 @@ module ActionView
     module TagHelper
       include ERB::Util
 
-      BOOLEAN_ATTRIBUTES = %w(disabled readonly multiple checked).to_set
+      BOOLEAN_ATTRIBUTES = %w(disabled readonly multiple checked autobuffer
+                           autoplay controls loop selected hidden scoped async
+                           defer reversed ismap seemless muted required
+                           autofocus novalidate formnovalidate open).to_set
       BOOLEAN_ATTRIBUTES.merge(BOOLEAN_ATTRIBUTES.map {|attr| attr.to_sym })
 
       # Returns an empty HTML tag of type +name+ which by default is XHTML
@@ -38,7 +40,7 @@ module ActionView
       #   tag("img", { :src => "open &amp; shut.png" }, false, false)
       #   # => <img src="open &amp; shut.png" />
       def tag(name, options = nil, open = false, escape = true)
-        "<#{name}#{tag_options(options, escape) if options}#{open ? ">" : " />"}"
+        "<#{name}#{tag_options(options, escape) if options}#{open ? ">" : " />"}".html_safe
       end
 
       # Returns an HTML block tag of type +name+ surrounding the +content+. Add
@@ -70,7 +72,7 @@ module ActionView
           content_tag = content_tag_string(name, capture(&block), options, escape)
 
           if block_called_from_erb?(block)
-            concat(content_tag)
+            safe_concat(content_tag)
           else
             content_tag
           end
@@ -91,7 +93,7 @@ module ActionView
       #   cdata_section(File.read("hello_world.txt"))
       #   # => <![CDATA[<hello from a text file]]>
       def cdata_section(content)
-        "<![CDATA[#{content}]]>"
+        "<![CDATA[#{content}]]>".html_safe
       end
 
       # Returns an escaped version of +html+ without affecting existing escaped entities.
@@ -103,7 +105,7 @@ module ActionView
       #   escape_once("&lt;&lt; Accept & Checkout")
       #   # => "&lt;&lt; Accept &amp; Checkout"
       def escape_once(html)
-        html.to_s.gsub(/[\"><]|&(?!([a-zA-Z]+|(#\d+));)/) { |special| ERB::Util::HTML_ESCAPE[special] }
+        ActiveSupport::Multibyte.clean(html.to_s).gsub(/[\"><]|&(?!([a-zA-Z]+|(#\d+));)/) { |special| ERB::Util::HTML_ESCAPE[special] }
       end
 
       private
@@ -125,24 +127,22 @@ module ActionView
 
         def content_tag_string(name, content, options, escape = true)
           tag_options = tag_options(options, escape) if options
-          "<#{name}#{tag_options}>#{content}</#{name}>"
+          ("<#{name}#{tag_options}>".html_safe << content.to_s).safe_concat("</#{name}>")
         end
 
         def tag_options(options, escape = true)
           unless options.blank?
             attrs = []
-            if escape
-              options.each_pair do |key, value|
-                if BOOLEAN_ATTRIBUTES.include?(key)
-                  attrs << %(#{key}="#{key}") if value
-                else
-                  attrs << %(#{key}="#{escape_once(value)}") if !value.nil?
-                end
+            options.each_pair do |key, value|
+              if BOOLEAN_ATTRIBUTES.include?(key)
+                attrs << %(#{key}="#{key}") if value
+              elsif !value.nil?
+                final_value = value.is_a?(Array) ? value.join(" ") : value
+                final_value = escape_once(final_value) if escape
+                attrs << %(#{key}="#{final_value}")
               end
-            else
-              attrs = options.map { |key, value| %(#{key}="#{value}") }
             end
-            " #{attrs.sort * ' '}" unless attrs.empty?
+            " #{attrs.sort * ' '}".html_safe unless attrs.empty?
           end
         end
     end

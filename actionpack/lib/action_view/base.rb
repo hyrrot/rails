@@ -1,20 +1,26 @@
 require 'active_support/core_ext/module/attr_internal'
 require 'active_support/core_ext/module/delegation'
+require 'active_support/core_ext/class/attribute'
 
 module ActionView #:nodoc:
   class ActionViewError < StandardError #:nodoc:
   end
 
   class MissingTemplate < ActionViewError #:nodoc:
-    attr_reader :path, :action_name
+    attr_reader :path
 
-    def initialize(paths, path, template_format = nil)
+    def initialize(paths, path, details, partial)
       @path = path
-      @action_name = path.split("/").last.split(".")[0...-1].join(".")
-      full_template_path = path.include?('.') ? path : "#{path}.erb"
-      display_paths = paths.compact.join(":")
-      template_type = (path =~ /layouts/i) ? 'layout' : 'template'
-      super("Missing #{template_type} #{full_template_path} in view path #{display_paths}")
+      display_paths = paths.compact.map{ |p| p.to_s.inspect }.join(", ")
+      template_type = if partial
+        "partial"
+      elsif path =~ /layouts/i
+        'layout'
+      else
+        'template'
+      end
+
+      super("Missing #{template_type} #{path} with #{details.inspect} in view paths #{display_paths}")
     end
   end
 
@@ -164,16 +170,38 @@ module ActionView #:nodoc:
   #
   # See the ActionView::Helpers::PrototypeHelper::GeneratorMethods documentation for more details.
   class Base
+    module Subclasses
+    end
+
     include Helpers, Rendering, Partials, ::ERB::Util
+
+    def config
+      self.config = DEFAULT_CONFIG unless @config
+      @config
+    end
+
+    def config=(config)
+      @config = ActiveSupport::OrderedOptions.new.merge(config)
+    end
 
     extend ActiveSupport::Memoizable
 
     attr_accessor :base_path, :assigns, :template_extension, :formats
-    attr_accessor :controller
     attr_internal :captures
 
+    def reset_formats(formats)
+      @formats = formats
+
+      if defined?(AbstractController::HashKey)
+        # This is expensive, but we need to reset this when the format is updated,
+        # which currently only happens
+        Thread.current[:format_locale_key] =
+          AbstractController::HashKey.get(self.class, formats, I18n.locale)
+      end
+    end
+
     class << self
-      delegate :erb_trim_mode=, :to => 'ActionView::TemplateHandlers::ERB'
+      delegate :erb_trim_mode=, :to => 'ActionView::Template::Handlers::ERB'
       delegate :logger, :to => 'ActionController::Base', :allow_nil => true
     end
 
@@ -189,20 +217,27 @@ module ActionView #:nodoc:
     @@cache_template_loading = nil
     cattr_accessor :cache_template_loading
 
+    # :nodoc:
+    def self.xss_safe?
+      true
+    end
+
     def self.cache_template_loading?
       ActionController::Base.allow_concurrency || (cache_template_loading.nil? ? !ActiveSupport::Dependencies.load? : cache_template_loading)
     end
 
     attr_internal :request, :layout
 
-    delegate :controller_path, :to => :controller, :allow_nil => true
+    def controller_path
+      @controller_path ||= controller && controller.controller_path
+    end
 
     delegate :request_forgery_protection_token, :template, :params, :session, :cookies, :response, :headers,
              :flash, :action_name, :controller_name, :to => :controller
 
     delegate :logger, :to => :controller, :allow_nil => true
 
-    delegate :find_by_parts, :to => :view_paths
+    delegate :find, :to => :view_paths
 
     include Context
 
@@ -210,48 +245,56 @@ module ActionView #:nodoc:
       ActionView::PathSet.new(Array(value))
     end
 
+    class_attribute :helpers
     attr_reader :helpers
 
-    class ProxyModule < Module
-      def initialize(receiver)
-        @receiver = receiver
-      end
-
-      def include(*args)
-        super(*args)
-        @receiver.extend(*args)
-      end
-    end
-
     def self.for_controller(controller)
-      new(controller.class.view_paths, {}, controller).tap do |view|
-        view.helpers.include(controller._helpers) if controller.respond_to?(:_helpers)
+      @views ||= {}
+
+      # TODO: Decouple this so helpers are a separate concern in AV just like
+      # they are in AC.
+      if controller.class.respond_to?(:_helper_serial)
+        klass = @views[controller.class._helper_serial] ||= Class.new(self) do
+          # Try to make stack traces clearer
+          class_eval <<-ruby_eval, __FILE__, __LINE__ + 1
+            def self.name
+              "ActionView for #{controller.class}"
+            end
+
+            def inspect
+              "#<#{self.class.name}>"
+            end
+          ruby_eval
+
+          if controller.respond_to?(:_helpers)
+            include controller._helpers
+            self.helpers = controller._helpers
+          end
+        end
+      else
+        klass = self
       end
+
+      klass.new(controller.class.view_paths, {}, controller)
     end
 
     def initialize(view_paths = [], assigns_for_first_render = {}, controller = nil, formats = nil)#:nodoc:
-      @formats = formats || [:html]
+      @config = nil
+      @formats = formats
       @assigns = assigns_for_first_render.each { |key, value| instance_variable_set("@#{key}", value) }
-      @controller = controller
-      @helpers = ProxyModule.new(self)
-      @_content_for = Hash.new {|h,k| h[k] = "" }
+      @helpers = self.class.helpers || Module.new
+
+      @_controller   = controller
+      @_content_for  = Hash.new {|h,k| h[k] = ActiveSupport::SafeBuffer.new }
+      @_virtual_path = nil
       self.view_paths = view_paths
     end
 
-    attr_internal :template
+    attr_internal :controller, :template
     attr_reader :view_paths
 
     def view_paths=(paths)
       @view_paths = self.class.process_view_paths(paths)
-    end
-
-    def with_template(current_template)
-      _evaluate_assigns_and_ivars
-      last_template, self.template = template, current_template
-      last_formats, self.formats = formats, [current_template.mime_type.to_sym] + Mime::SET.symbols
-      yield
-    ensure
-      self.template, self.formats = last_template, last_formats
     end
 
     def punctuate_body!(part)
@@ -262,19 +305,11 @@ module ActionView #:nodoc:
 
     # Evaluates the local assigns and controller ivars, pushes them to the view.
     def _evaluate_assigns_and_ivars #:nodoc:
-      @assigns_added ||= _copy_ivars_from_controller
-    end
-
-  private
-
-    def _copy_ivars_from_controller #:nodoc:
-      if @controller
-        variables = @controller.instance_variable_names
-        variables -= @controller.protected_instance_variables if @controller.respond_to?(:protected_instance_variables)
-        variables.each { |name| instance_variable_set(name, @controller.instance_variable_get(name)) }
+      if controller
+        variables = controller.instance_variable_names
+        variables -= controller.protected_instance_variables if controller.respond_to?(:protected_instance_variables)
+        variables.each { |name| instance_variable_set(name, controller.instance_variable_get(name)) }
       end
-      true
     end
-
   end
 end

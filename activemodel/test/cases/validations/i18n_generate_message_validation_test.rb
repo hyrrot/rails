@@ -3,52 +3,10 @@ require 'cases/tests_database'
 
 require 'models/person'
 
-class I18nGenerateMessageValidationTest < Test::Unit::TestCase
+class I18nGenerateMessageValidationTest < ActiveModel::TestCase
   def setup
-    reset_callbacks Person
+    Person.reset_callbacks(:validate)
     @person = Person.new
-
-    @old_load_path, @old_backend = I18n.load_path, I18n.backend
-    I18n.load_path.clear
-    I18n.backend = I18n::Backend::Simple.new
-
-    I18n.backend.store_translations :'en', {
-      :activemodel => {
-        :errors => {
-          :messages => {
-            :inclusion => "is not included in the list",
-            :exclusion => "is reserved",
-            :invalid => "is invalid",
-            :confirmation => "doesn't match confirmation",
-            :accepted  => "must be accepted",
-            :empty => "can't be empty",
-            :blank => "can't be blank",
-            :too_long => "is too long (maximum is {{count}} characters)",
-            :too_short => "is too short (minimum is {{count}} characters)",
-            :wrong_length => "is the wrong length (should be {{count}} characters)",
-            :not_a_number => "is not a number",
-            :greater_than => "must be greater than {{count}}",
-            :greater_than_or_equal_to => "must be greater than or equal to {{count}}",
-            :equal_to => "must be equal to {{count}}",
-            :less_than => "must be less than {{count}}",
-            :less_than_or_equal_to => "must be less than or equal to {{count}}",
-            :odd => "must be odd",
-            :even => "must be even"
-          }
-        }
-      }
-    }
-  end
-
-  def teardown
-    I18n.load_path.replace @old_load_path
-    I18n.backend = @old_backend
-  end
-
-  def reset_callbacks(*models)
-    models.each do |model|
-      model.instance_variable_set("@validate_callbacks", ActiveSupport::Callbacks::CallbackChain.new)
-    end
   end
 
   # validates_inclusion_of: generate_message(attr_name, :inclusion, :default => configuration[:message], :value => value)
@@ -69,7 +27,6 @@ class I18nGenerateMessageValidationTest < Test::Unit::TestCase
     assert_equal 'custom message title', @person.errors.generate_message(:title, :exclusion, :default => 'custom message {{value}}', :value => 'title')
   end
 
-  # validates_associated: generate_message(attr_name, :invalid, :default => configuration[:message], :value => value)
   # validates_format_of:  generate_message(attr_name, :invalid, :default => configuration[:message], :value => value)
   def test_generate_message_invalid_with_default_message
     assert_equal 'is invalid', @person.errors.generate_message(:title, :invalid, :default => nil, :value => 'title')

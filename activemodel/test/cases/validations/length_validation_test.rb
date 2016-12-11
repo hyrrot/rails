@@ -8,9 +8,10 @@ require 'models/person'
 
 class LengthValidationTest < ActiveModel::TestCase
   include ActiveModel::TestsDatabase
-  include ActiveModel::ValidationsRepairHelper
 
-  repair_validations(Topic)
+  def teardown
+    Topic.reset_callbacks(:validate)
+  end
 
   def test_validates_length_of_with_allow_nil
     Topic.validates_length_of( :title, :is => 5, :allow_nil=>true )
@@ -52,6 +53,12 @@ class LengthValidationTest < ActiveModel::TestCase
     assert_equal ["is too short (minimum is 5 characters)"], t.errors["title"]
   end
 
+  def test_validates_length_of_using_maximum_should_allow_nil
+    Topic.validates_length_of :title, :maximum => 10
+    t = Topic.create
+    assert t.valid?
+  end
+
   def test_optionally_validates_length_of_using_minimum
     Topic.validates_length_of :title, :minimum => 5, :allow_nil => true
 
@@ -75,9 +82,6 @@ class LengthValidationTest < ActiveModel::TestCase
 
     t.title = ""
     assert t.valid?
-
-    t.title = nil
-    assert !t.valid?
   end
 
   def test_optionally_validates_length_of_using_maximum
@@ -106,6 +110,20 @@ class LengthValidationTest < ActiveModel::TestCase
 
     t.title = "abe"
     t.content  = "mad"
+    assert t.valid?
+  end
+
+  def test_validates_length_of_using_within_with_exclusive_range
+    Topic.validates_length_of(:title, :within => 4...10)
+
+    t = Topic.new("title" => "9 chars!!")
+    assert t.valid?
+
+    t.title = "Now I'm 10"
+    assert !t.valid?
+    assert_equal ["is too long (maximum is 9 characters)"], t.errors[:title]
+
+    t.title = "Four"
     assert t.valid?
   end
 
@@ -203,10 +221,8 @@ class LengthValidationTest < ActiveModel::TestCase
   end
 
   def test_validates_length_of_nasty_params
-    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :minimum=>6, :maximum=>9) }
-    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :within=>6, :maximum=>9) }
-    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :within=>6, :minimum=>9) }
-    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :within=>6, :is=>9) }
+    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :is=>-6) }
+    assert_raise(ArgumentError) { Topic.validates_length_of(:title, :within=>6) }
     assert_raise(ArgumentError) { Topic.validates_length_of(:title, :minimum=>"a") }
     assert_raise(ArgumentError) { Topic.validates_length_of(:title, :maximum=>"a") }
     assert_raise(ArgumentError) { Topic.validates_length_of(:title, :within=>"a") }
@@ -402,48 +418,18 @@ class LengthValidationTest < ActiveModel::TestCase
     assert_equal ["Your essay must be at least 5 words."], t.errors[:content]
   end
 
-  def test_validates_length_of_with_custom_too_long_using_quotes
-    repair_validations(Developer) do
-      Developer.validates_length_of :name, :maximum => 4, :too_long=> "This string contains 'single' and \"double\" quotes"
-      d = Developer.new
-      d.name = "Jeffrey"
-      assert !d.valid?
-      assert_equal ["This string contains 'single' and \"double\" quotes"], d.errors[:name]
-    end
-  end
-
-  def test_validates_length_of_with_custom_too_short_using_quotes
-    repair_validations(Developer) do
-      Developer.validates_length_of :name, :minimum => 4, :too_short=> "This string contains 'single' and \"double\" quotes"
-      d = Developer.new
-      d.name = "Joe"
-      assert !d.valid?
-      assert_equal ["This string contains 'single' and \"double\" quotes"], d.errors[:name]
-    end
-  end
-
-  def test_validates_length_of_with_custom_message_using_quotes
-    repair_validations(Developer) do
-      Developer.validates_length_of :name, :minimum => 4, :message=> "This string contains 'single' and \"double\" quotes"
-      d = Developer.new
-      d.name = "Joe"
-      assert !d.valid?
-      assert_equal ["This string contains 'single' and \"double\" quotes"], d.errors[:name]
-    end
-  end
-
   def test_validates_length_of_for_ruby_class
-    repair_validations(Person) do
-      Person.validates_length_of :karma, :minimum => 5
+    Person.validates_length_of :karma, :minimum => 5
 
-      p = Person.new
-      p.karma = "Pix"
-      assert p.invalid?
+    p = Person.new
+    p.karma = "Pix"
+    assert p.invalid?
 
-      assert_equal ["is too short (minimum is 5 characters)"], p.errors[:karma]
+    assert_equal ["is too short (minimum is 5 characters)"], p.errors[:karma]
 
-      p.karma = "The Smiths"
-      assert p.valid?
-    end
+    p.karma = "The Smiths"
+    assert p.valid?
+  ensure
+    Person.reset_callbacks(:validate)
   end
 end

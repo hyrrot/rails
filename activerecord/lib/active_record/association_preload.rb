@@ -1,3 +1,6 @@
+require 'active_support/core_ext/array/wrap'
+require 'active_support/core_ext/enumerable'
+
 module ActiveRecord
   # See ActiveRecord::AssociationPreload::ClassMethods for documentation.
   module AssociationPreload #:nodoc:
@@ -82,7 +85,7 @@ module ActiveRecord
       # only one level deep in the +associations+ argument, i.e. it's not passed
       # to the child associations when +associations+ is a Hash.
       def preload_associations(records, associations, preload_options={})
-        records = [records].flatten.compact.uniq
+        records = Array.wrap(records).compact.uniq
         return if records.empty?
         case associations
         when Array then associations.each {|association| preload_associations(records, association, preload_options)}
@@ -92,7 +95,7 @@ module ActiveRecord
             raise "parent must be an association name" unless parent.is_a?(String) || parent.is_a?(Symbol)
             preload_associations(records, parent, preload_options)
             reflection = reflections[parent]
-            parents = records.map {|record| record.send(reflection.name)}.flatten.compact
+            parents = records.sum { |record| Array.wrap(record.send(reflection.name)) }
             unless parents.empty?
               parents.first.class.preload_associations(parents, child)
             end
@@ -123,7 +126,8 @@ module ActiveRecord
         parent_records.each do |parent_record|
           association_proxy = parent_record.send(reflection_name)
           association_proxy.loaded
-          association_proxy.target.push(*[associated_record].flatten)
+          association_proxy.target.push *Array.wrap(associated_record)
+
           association_proxy.__send__(:set_inverse_instance, associated_record, parent_record)
         end
       end
@@ -183,13 +187,12 @@ module ActiveRecord
         conditions = "t0.#{reflection.primary_key_name} #{in_or_equals_for_ids(ids)}"
         conditions << append_conditions(reflection, preload_options)
 
-        associated_records = reflection.klass.with_exclusive_scope do
-          reflection.klass.find(:all, :conditions => [conditions, ids],
-            :include => options[:include],
-            :joins => "INNER JOIN #{connection.quote_table_name options[:join_table]} t0 ON #{reflection.klass.quoted_table_name}.#{reflection.klass.primary_key} = t0.#{reflection.association_foreign_key}",
-            :select => "#{options[:select] || table_name+'.*'}, t0.#{reflection.primary_key_name} as the_parent_record_id",
-            :order => options[:order])
-        end
+        associated_records = reflection.klass.unscoped.where([conditions, ids]).
+            includes(options[:include]).
+            joins("INNER JOIN #{connection.quote_table_name options[:join_table]} t0 ON #{reflection.klass.quoted_table_name}.#{reflection.klass.primary_key} = t0.#{reflection.association_foreign_key}").
+            select("#{options[:select] || table_name+'.*'}, t0.#{reflection.primary_key_name} as the_parent_record_id").
+            order(options[:order]).to_a
+
         set_association_collection_records(id_to_record_map, reflection.name, associated_records, 'the_parent_record_id')
       end
 
@@ -254,6 +257,7 @@ module ActiveRecord
         through_reflection = reflections[through_association]
         through_primary_key = through_reflection.primary_key_name
 
+        through_records = []
         if reflection.options[:source_type]
           interface = reflection.source_reflection.options[:foreign_type]
           preload_options = {:conditions => ["#{connection.quote_column_name interface} = ?", reflection.options[:source_type]]}
@@ -262,23 +266,22 @@ module ActiveRecord
           records.first.class.preload_associations(records, through_association, preload_options)
 
           # Dont cache the association - we would only be caching a subset
-          through_records = []
           records.each do |record|
             proxy = record.send(through_association)
 
             if proxy.respond_to?(:target)
-              through_records << proxy.target
+              through_records.concat Array.wrap(proxy.target)
               proxy.reset
             else # this is a has_one :through reflection
               through_records << proxy if proxy
             end
           end
-          through_records.flatten!
         else
           records.first.class.preload_associations(records, through_association)
-          through_records = records.map {|record| record.send(through_association)}.flatten
+          records.each do |record|
+            through_records.concat Array.wrap(record.send(through_association))
+          end
         end
-        through_records.compact!
         through_records
       end
 
@@ -323,6 +326,7 @@ module ActiveRecord
           table_name = klass.quoted_table_name
           primary_key = klass.primary_key
           column_type = klass.columns.detect{|c| c.name == primary_key}.type
+
           ids = id_map.keys.map do |id|
             if column_type == :integer
               id.to_i
@@ -332,15 +336,12 @@ module ActiveRecord
               id
             end
           end
+
           conditions = "#{table_name}.#{connection.quote_column_name(primary_key)} #{in_or_equals_for_ids(ids)}"
           conditions << append_conditions(reflection, preload_options)
-          associated_records = klass.with_exclusive_scope do
-            klass.find(:all, :conditions => [conditions, ids],
-                                          :include => options[:include],
-                                          :select => options[:select],
-                                          :joins => options[:joins],
-                                          :order => options[:order])
-          end
+
+          associated_records = klass.unscoped.where([conditions, ids]).apply_finder_options(options.slice(:include, :select, :joins, :order)).to_a
+
           set_association_single_records(id_map, reflection.name, associated_records, primary_key)
         end
       end
@@ -358,15 +359,16 @@ module ActiveRecord
 
         conditions << append_conditions(reflection, preload_options)
 
-        reflection.klass.with_exclusive_scope do
-          reflection.klass.find(:all,
-                              :select => (preload_options[:select] || options[:select] || "#{table_name}.*"),
-                              :include => preload_options[:include] || options[:include],
-                              :conditions => [conditions, ids],
-                              :joins => options[:joins],
-                              :group => preload_options[:group] || options[:group],
-                              :order => preload_options[:order] || options[:order])
-        end
+        find_options = {
+          :select => preload_options[:select] || options[:select] || "#{table_name}.*",
+          :include => preload_options[:include] || options[:include],
+          :conditions => [conditions, ids],
+          :joins => options[:joins],
+          :group => preload_options[:group] || options[:group],
+          :order => preload_options[:order] || options[:order]
+        }
+
+        reflection.klass.unscoped.apply_finder_options(find_options).to_a
       end
 
 

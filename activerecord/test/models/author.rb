@@ -1,5 +1,6 @@
 class Author < ActiveRecord::Base
   has_many :posts
+  has_many :very_special_comments, :through => :posts
   has_many :posts_with_comments, :include => :comments, :class_name => "Post"
   has_many :popular_grouped_posts, :include => :comments, :class_name => "Post", :group => "type", :having => "SUM(comments_count) > 1", :select => "type"
   has_many :posts_with_comments_sorted_by_comment_id, :include => :comments, :class_name => "Post", :order => 'comments.id'
@@ -34,7 +35,7 @@ class Author < ActiveRecord::Base
   has_many :ordered_uniq_comments, :through => :posts, :source => :comments, :uniq => true, :order => 'comments.id'
   has_many :ordered_uniq_comments_desc, :through => :posts, :source => :comments, :uniq => true, :order => 'comments.id DESC'
   has_many :readonly_comments, :through => :posts, :source => :comments, :readonly => true
-  
+
   has_many :special_posts
   has_many :special_post_comments, :through => :special_posts, :source => :comments
 
@@ -93,8 +94,9 @@ class Author < ActiveRecord::Base
   belongs_to :author_address_extra, :dependent => :delete, :class_name => "AuthorAddress"
 
   attr_accessor :post_log
+  after_initialize :set_post_log
 
-  def after_initialize
+  def set_post_log
     @post_log = []
   end
 

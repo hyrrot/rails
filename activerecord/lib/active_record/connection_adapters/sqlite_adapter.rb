@@ -4,40 +4,18 @@ require 'active_support/core_ext/kernel/requires'
 module ActiveRecord
   class Base
     class << self
-      # Establishes a connection to the database that's used by all Active Record objects
-      def sqlite_connection(config) # :nodoc:
-        parse_sqlite_config!(config)
-
-        unless self.class.const_defined?(:SQLite)
-          require_library_or_gem(config[:adapter])
-
-          db = SQLite::Database.new(config[:database], 0)
-          db.show_datatypes   = "ON" if !defined? SQLite::Version
-          db.results_as_hash  = true if defined? SQLite::Version
-          db.type_translation = false
-
-          # "Downgrade" deprecated sqlite API
-          if SQLite.const_defined?(:Version)
-            ConnectionAdapters::SQLite2Adapter.new(db, logger, config)
-          else
-            ConnectionAdapters::DeprecatedSQLiteAdapter.new(db, logger, config)
-          end
-        end
-      end
-
       private
         def parse_sqlite_config!(config)
-          config[:database] ||= config[:dbfile]
           # Require database.
           unless config[:database]
             raise ArgumentError, "No database file specified. Missing argument: database"
           end
 
-          # Allow database path relative to RAILS_ROOT, but only if
+          # Allow database path relative to Rails.root, but only if
           # the database path is not the special path that tells
           # Sqlite to build a database only in memory.
-          if Object.const_defined?(:RAILS_ROOT) && ':memory:' != config[:database]
-            config[:database] = File.expand_path(config[:database], RAILS_ROOT)
+          if defined?(Rails.root) && ':memory:' != config[:database]
+            config[:database] = File.expand_path(config[:database], Rails.root)
           end
         end
     end
@@ -102,6 +80,10 @@ module ActiveRecord
         true
       end
 
+      def supports_primary_key? #:nodoc:
+        true
+      end
+
       def requires_reloading?
         true
       end
@@ -109,7 +91,7 @@ module ActiveRecord
       def supports_add_column?
         sqlite_version >= '3.1.6'
       end
- 
+
       def disconnect!
         super
         @connection.close rescue nil
@@ -181,6 +163,7 @@ module ActiveRecord
       def insert_sql(sql, name = nil, pk = nil, id_value = nil, sequence_name = nil) #:nodoc:
         super || @connection.last_insert_row_id
       end
+      alias :create :insert_sql
 
       def select_rows(sql, name = nil)
         execute(sql, name).map do |row|
@@ -200,12 +183,6 @@ module ActiveRecord
         catch_schema_changes { @connection.rollback }
       end
 
-      # SELECT ... FOR UPDATE is redundant since the table is locked.
-      def add_lock!(sql, options) #:nodoc:
-        sql
-      end
-
-
       # SCHEMA STATEMENTS ========================================
 
       def tables(name = nil) #:nodoc:
@@ -216,20 +193,20 @@ module ActiveRecord
         SQL
 
         execute(sql, name).map do |row|
-          row[0]
+          row['name']
         end
       end
 
       def columns(table_name, name = nil) #:nodoc:
         table_structure(table_name).map do |field|
-          SQLiteColumn.new(field['name'], field['dflt_value'], field['type'], field['notnull'] == "0")
+          SQLiteColumn.new(field['name'], field['dflt_value'], field['type'], field['notnull'].to_i == 0)
         end
       end
 
       def indexes(table_name, name = nil) #:nodoc:
         execute("PRAGMA index_list(#{quote_table_name(table_name)})", name).map do |row|
           index = IndexDefinition.new(table_name, row['name'])
-          index.unique = row['unique'] != '0'
+          index.unique = row['unique'].to_i != 0
           index.columns = execute("PRAGMA index_info('#{index.name}')").map { |col| col['name'] }
           index
         end
@@ -307,8 +284,8 @@ module ActiveRecord
         alter_table(table_name, :rename => {column_name.to_s => new_column_name.to_s})
       end
 
-      def empty_insert_statement(table_name)
-        "INSERT INTO #{table_name} VALUES(NULL)"
+      def empty_insert_statement_value
+        "VALUES(NULL)"
       end
 
       protected
@@ -325,9 +302,9 @@ module ActiveRecord
         end
 
         def table_structure(table_name)
-          returning structure = execute("PRAGMA table_info(#{quote_table_name(table_name)})") do
-            raise(ActiveRecord::StatementInvalid, "Could not find table '#{table_name}'") if structure.empty?
-          end
+          structure = @connection.table_info(quote_table_name(table_name))
+          raise(ActiveRecord::StatementInvalid, "Could not find table '#{table_name}'") if structure.empty?
+          structure
         end
 
         def alter_table(table_name, options = {}) #:nodoc:
@@ -355,7 +332,7 @@ module ActiveRecord
                 (options[:rename][column.name] ||
                  options[:rename][column.name.to_sym] ||
                  column.name) : column.name
-              
+
               @definition.column(column_name, column.type,
                 :limit => column.limit, :default => column.default,
                 :null => column.null)
@@ -441,19 +418,6 @@ module ActiveRecord
           end
         end
 
-    end
-
-    class SQLite2Adapter < SQLiteAdapter # :nodoc:
-      def rename_table(name, new_name)
-        move_table(name, new_name)
-      end
-    end
-
-    class DeprecatedSQLiteAdapter < SQLite2Adapter # :nodoc:
-      def insert(sql, name = nil, pk = nil, id_value = nil)
-        execute(sql, name = nil)
-        id_value || @connection.last_insert_rowid
-      end
     end
   end
 end

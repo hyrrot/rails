@@ -1,7 +1,11 @@
 require 'rack/utils'
+require 'rack/request'
 
 module ActionDispatch
   module Session
+    class SessionRestoreError < StandardError #:nodoc:
+    end
+
     class AbstractStore
       ENV_SESSION_KEY = 'rack.session'.freeze
       ENV_SESSION_OPTIONS_KEY = 'rack.session.options'.freeze
@@ -19,7 +23,7 @@ module ActionDispatch
 
         def session_id
           ActiveSupport::Deprecation.warn(
-            "ActionController::Session::AbstractStore::SessionHash#session_id " +
+            "ActionDispatch::Session::AbstractStore::SessionHash#session_id " +
             "has been deprecated. Please use request.session_options[:id] instead.", caller)
           @env[ENV_SESSION_OPTIONS_KEY][:id]
         end
@@ -45,6 +49,7 @@ module ActionDispatch
             ActiveSupport::Deprecation.warn('use replace instead', caller)
             replace({})
           else
+            load! unless @loaded
             super(hash.stringify_keys)
           end
         end
@@ -54,13 +59,14 @@ module ActionDispatch
             ActiveSupport::Deprecation.warn('use clear instead', caller)
             clear
           else
+            load! unless @loaded
             super(key.to_s)
           end
         end
 
         def data
          ActiveSupport::Deprecation.warn(
-           "ActionController::Session::AbstractStore::SessionHash#data " +
+           "ActionDispatch::Session::AbstractStore::SessionHash#data " +
            "has been deprecated. Please use #to_hash instead.", caller)
           to_hash
         end
@@ -96,7 +102,7 @@ module ActionDispatch
                 # Note that the regexp does not allow $1 to end with a ':'
                 $1.constantize
               rescue LoadError, NameError => const_error
-                raise ActionController::SessionRestoreError, "Session contains objects whose class definition isn't available.\nRemember to require the classes for all objects kept in the session.\n(Original exception: #{const_error.message} [#{const_error.class}])\n"
+                raise ActionDispatch::Session::SessionRestoreError, "Session contains objects whose class definition isn't available.\nRemember to require the classes for all objects kept in the session.\n(Original exception: #{const_error.message} [#{const_error.class}])\n"
               end
 
               retry

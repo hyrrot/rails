@@ -1,5 +1,4 @@
-require 'singleton'
-require 'set'
+require 'active_support/core_ext/class/attribute'
 
 module ActiveRecord
   # Observer classes respond to lifecycle callbacks to implement trigger-like
@@ -88,9 +87,16 @@ module ActiveRecord
   # singletons and that call instantiates and registers them.
   #
   class Observer < ActiveModel::Observer
+    class_attribute :observed_methods
+    self.observed_methods = []
+
     def initialize
       super
       observed_subclasses.each { |klass| add_observer!(klass) }
+    end
+
+    def self.method_added(method)
+      self.observed_methods += [method] if ActiveRecord::Callbacks::CALLBACKS.include?(method.to_sym)
     end
 
     protected
@@ -100,8 +106,15 @@ module ActiveRecord
 
       def add_observer!(klass)
         super
-        if respond_to?(:after_find) && !klass.method_defined?(:after_find)
-          klass.class_eval 'def after_find() end'
+
+        # Check if a notifier callback was already added to the given class. If
+        # it was not, add it.
+        self.class.observed_methods.each do |method|
+          callback = :"_notify_observers_for_#{method}"
+          if (klass.instance_methods & [callback, callback.to_s]).empty?
+            klass.class_eval "def #{callback}; notify_observers(:#{method}); end"
+            klass.send(method, callback)
+          end
         end
       end
   end

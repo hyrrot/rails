@@ -8,12 +8,23 @@ module ActiveResource
     end
 
     def to_s
-      "Failed with #{response.code} #{response.message if response.respond_to?(:message)}"
+      message = "Failed."
+      message << "  Response code = #{response.code}." if response.respond_to?(:code)
+      message << "  Response message = #{response.message}." if response.respond_to?(:message)
+      message
     end
   end
 
   # Raised when a Timeout::Error occurs.
   class TimeoutError < ConnectionError
+    def initialize(message)
+      @message = message
+    end
+    def to_s; @message ;end
+  end
+
+  # Raised when a OpenSSL::SSL::SSLError occurs.
+  class SSLError < ConnectionError
     def initialize(message)
       @message = message
     end
@@ -42,6 +53,9 @@ module ActiveResource
 
   # 409 Conflict
   class ResourceConflict < ClientError; end # :nodoc:
+
+  # 410 Gone
+  class ResourceGone < ClientError; end # :nodoc:
 
   # 5xx Server Error
   class ServerError < ConnectionError; end # :nodoc:

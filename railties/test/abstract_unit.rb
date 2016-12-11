@@ -1,30 +1,20 @@
 ORIG_ARGV = ARGV.dup
 
-$:.unshift File.dirname(__FILE__) + "/../../activesupport/lib"
-$:.unshift File.dirname(__FILE__) + "/../../activerecord/lib"
-$:.unshift File.dirname(__FILE__) + "/../../actionpack/lib"
-$:.unshift File.dirname(__FILE__) + "/../../actionmailer/lib"
-$:.unshift File.dirname(__FILE__) + "/../../activeresource/lib"
-$:.unshift File.dirname(__FILE__) + "/../lib"
-$:.unshift File.dirname(__FILE__) + "/../builtin/rails_info"
+require File.expand_path("../../../load_paths", __FILE__)
+$:.unshift File.expand_path("../../builtin/rails_info", __FILE__)
 
 require 'stringio'
-require 'rubygems'
 require 'test/unit'
+require 'fileutils'
 
 require 'active_support'
-require 'active_support/test_case'
+require 'active_support/core_ext/logger'
 
-if defined?(RAILS_ROOT)
-  RAILS_ROOT.replace File.dirname(__FILE__)
-else
-  RAILS_ROOT = File.dirname(__FILE__)
-end
+require 'action_controller'
+require 'rails/all'
 
-def uses_gem(gem_name, test_name, version = '> 0')
-  gem gem_name.to_s, version
-  require gem_name.to_s
-  yield
-rescue LoadError
-  $stderr.puts "Skipping #{test_name} tests. `gem install #{gem_name}` and try again."
+# TODO: Remove these hacks
+class TestApp < Rails::Application
+  config.root = File.dirname(__FILE__)
 end
+Rails.application = TestApp

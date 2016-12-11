@@ -1,10 +1,12 @@
 # encoding: utf-8
 require 'abstract_unit'
+require 'controller/fake_controllers'
 
 RequestMock = Struct.new("Request", :request_uri, :protocol, :host_with_port, :env)
 
 class UrlHelperTest < ActionView::TestCase
-  tests ActionView::Helpers::UrlHelper
+  include ActiveSupport::Configurable
+  DEFAULT_CONFIG = ActionView::DEFAULT_CONFIG
 
   def setup
     super
@@ -20,9 +22,14 @@ class UrlHelperTest < ActionView::TestCase
 
   def test_url_for_escapes_urls
     @controller.url = "http://www.example.com?a=b&c=d"
-    assert_equal "http://www.example.com?a=b&amp;c=d", url_for(:a => 'b', :c => 'd')
+    assert_equal "http://www.example.com?a=b&c=d", url_for(:a => 'b', :c => 'd')
     assert_equal "http://www.example.com?a=b&amp;c=d", url_for(:a => 'b', :c => 'd', :escape => true)
     assert_equal "http://www.example.com?a=b&c=d", url_for(:a => 'b', :c => 'd', :escape => false)
+  end
+
+  def test_url_for_escaping_is_safety_aware
+    assert url_for(:a => 'b', :c => 'd', :escape => true).html_safe?, "escaped urls should be html_safe?"
+    assert !url_for(:a => 'b', :c => 'd', :escape => false).html_safe?, "non-escaped urls shouldn't be safe"
   end
 
   def test_url_for_escapes_url_once
@@ -38,6 +45,16 @@ class UrlHelperTest < ActionView::TestCase
   def test_url_for_with_back_and_no_referer
     @controller.request = RequestMock.new("http://www.example.com/weblog/show", nil, nil, {})
     assert_equal 'javascript:history.back()', url_for(:back)
+  end
+
+  def test_url_for_from_hash_doesnt_escape_ampersand
+    @controller = TestController.new
+    @view = ActionView::Base.new
+    @view.controller = @controller
+
+    path = @view.url_for(:controller => :cheeses, :foo => :bar, :baz => :quux)
+
+    assert_equal '/cheeses?baz=quux&foo=bar', sort_query_string_params(path)
   end
 
   # todo: missing test cases
@@ -59,8 +76,15 @@ class UrlHelperTest < ActionView::TestCase
 
   def test_button_to_with_javascript_confirm
     assert_dom_equal(
-      "<form method=\"post\" action=\"http://www.example.com\" class=\"button-to\"><div><input onclick=\"return confirm('Are you sure?');\" type=\"submit\" value=\"Hello\" /></div></form>",
+      "<form method=\"post\" action=\"http://www.example.com\" class=\"button-to\"><div><input data-confirm=\"Are you sure?\" type=\"submit\" value=\"Hello\" /></div></form>",
       button_to("Hello", "http://www.example.com", :confirm => "Are you sure?")
+    )
+  end
+
+  def test_button_to_with_remote_and_javascript_confirm
+    assert_dom_equal(
+      "<form method=\"post\" action=\"http://www.example.com\" class=\"button-to\" data-remote=\"true\"><div><input data-confirm=\"Are you sure?\" type=\"submit\" value=\"Hello\" /></div></form>",
+      button_to("Hello", "http://www.example.com", :remote => true, :confirm => "Are you sure?")
     )
   end
 
@@ -140,7 +164,7 @@ class UrlHelperTest < ActionView::TestCase
   end
 
   def test_link_tag_with_img
-    assert_dom_equal "<a href=\"http://www.example.com\"><img src='/favicon.jpg' /></a>", link_to("<img src='/favicon.jpg' />", "http://www.example.com")
+    assert_dom_equal "<a href=\"http://www.example.com\"><img src='/favicon.jpg' alt=\"Favicon\"  /></a>", link_to(image_tag("/favicon.jpg"), "http://www.example.com")
   end
 
   def test_link_with_nil_html_options
@@ -153,75 +177,60 @@ class UrlHelperTest < ActionView::TestCase
 
   def test_link_tag_with_javascript_confirm
     assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"return confirm('Are you sure?');\">Hello</a>",
+      "<a href=\"http://www.example.com\" data-confirm=\"Are you sure?\">Hello</a>",
       link_to("Hello", "http://www.example.com", :confirm => "Are you sure?")
     )
     assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"return confirm('You can\\'t possibly be sure, can you?');\">Hello</a>",
+      "<a href=\"http://www.example.com\" data-confirm=\"You can't possibly be sure, can you?\">Hello</a>",
       link_to("Hello", "http://www.example.com", :confirm => "You can't possibly be sure, can you?")
     )
     assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"return confirm('You can\\'t possibly be sure,\\n can you?');\">Hello</a>",
+      "<a href=\"http://www.example.com\" data-confirm=\"You can't possibly be sure,\n can you?\">Hello</a>",
       link_to("Hello", "http://www.example.com", :confirm => "You can't possibly be sure,\n can you?")
     )
   end
 
-  def test_link_tag_with_popup
+  def test_link_to_with_remote
     assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"window.open(this.href);return false;\">Hello</a>",
-      link_to("Hello", "http://www.example.com", :popup => true)
-    )
-    assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"window.open(this.href);return false;\">Hello</a>",
-      link_to("Hello", "http://www.example.com", :popup => 'true')
-    )
-    assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"window.open(this.href,'window_name','width=300,height=300');return false;\">Hello</a>",
-      link_to("Hello", "http://www.example.com", :popup => ['window_name', 'width=300,height=300'])
-    )
-  end
-
-  def test_link_tag_with_popup_and_javascript_confirm
-    assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"if (confirm('Fo\\' sho\\'?')) { window.open(this.href); };return false;\">Hello</a>",
-      link_to("Hello", "http://www.example.com", { :popup => true, :confirm => "Fo' sho'?" })
-    )
-    assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"if (confirm('Are you serious?')) { window.open(this.href,'window_name','width=300,height=300'); };return false;\">Hello</a>",
-      link_to("Hello", "http://www.example.com", { :popup => ['window_name', 'width=300,height=300'], :confirm => "Are you serious?" })
+      "<a href=\"http://www.example.com\" data-remote=\"true\">Hello</a>",
+      link_to("Hello", "http://www.example.com", :remote => true)
     )
   end
 
   def test_link_tag_using_post_javascript
     assert_dom_equal(
-      "<a href='http://www.example.com' onclick=\"var f = document.createElement('form'); f.style.display = 'none'; this.parentNode.appendChild(f); f.method = 'POST'; f.action = this.href;f.submit();return false;\">Hello</a>",
+      "<a href='http://www.example.com' data-method=\"post\" rel=\"nofollow\">Hello</a>",
       link_to("Hello", "http://www.example.com", :method => :post)
     )
   end
 
   def test_link_tag_using_delete_javascript
     assert_dom_equal(
-      "<a href='http://www.example.com' onclick=\"var f = document.createElement('form'); f.style.display = 'none'; this.parentNode.appendChild(f); f.method = 'POST'; f.action = this.href;var m = document.createElement('input'); m.setAttribute('type', 'hidden'); m.setAttribute('name', '_method'); m.setAttribute('value', 'delete'); f.appendChild(m);f.submit();return false;\">Destroy</a>",
+      "<a href='http://www.example.com' rel=\"nofollow\" data-method=\"delete\">Destroy</a>",
       link_to("Destroy", "http://www.example.com", :method => :delete)
     )
   end
 
   def test_link_tag_using_delete_javascript_and_href
     assert_dom_equal(
-      "<a href='\#' onclick=\"var f = document.createElement('form'); f.style.display = 'none'; this.parentNode.appendChild(f); f.method = 'POST'; f.action = 'http://www.example.com';var m = document.createElement('input'); m.setAttribute('type', 'hidden'); m.setAttribute('name', '_method'); m.setAttribute('value', 'delete'); f.appendChild(m);f.submit();return false;\">Destroy</a>",
+      "<a href='\#' rel=\"nofollow\" data-method=\"delete\">Destroy</a>",
       link_to("Destroy", "http://www.example.com", :method => :delete, :href => '#')
     )
   end
 
   def test_link_tag_using_post_javascript_and_confirm
     assert_dom_equal(
-      "<a href=\"http://www.example.com\" onclick=\"if (confirm('Are you serious?')) { var f = document.createElement('form'); f.style.display = 'none'; this.parentNode.appendChild(f); f.method = 'POST'; f.action = this.href;f.submit(); };return false;\">Hello</a>",
+      "<a href=\"http://www.example.com\" data-method=\"post\" rel=\"nofollow\" data-confirm=\"Are you serious?\">Hello</a>",
       link_to("Hello", "http://www.example.com", :method => :post, :confirm => "Are you serious?")
     )
   end
 
-  def test_link_tag_using_post_javascript_and_popup
-    assert_raise(ActionView::ActionViewError) { link_to("Hello", "http://www.example.com", :popup => true, :method => :post, :confirm => "Are you serious?") }
+  def test_link_tag_using_delete_javascript_and_href_and_confirm
+    assert_dom_equal(
+      "<a href='\#' rel=\"nofollow\" data-confirm=\"Are you serious?\" data-method=\"delete\">Destroy</a>",
+      link_to("Destroy", "http://www.example.com", :method => :delete, :href => '#', :confirm => "Are you serious?"),
+      "When specifying url, form should be generated with it, but not this.href"
+    )
   end
 
   def test_link_tag_using_block_in_erb
@@ -259,21 +268,21 @@ class UrlHelperTest < ActionView::TestCase
     assert current_page?({ :action => "show", :controller => "weblog" })
     assert current_page?("http://www.example.com/weblog/show")
   end
-  
+
   def test_current_page_ignoring_params
     @controller.request = RequestMock.new("http://www.example.com/weblog/show?order=desc&page=1")
     @controller.url = "http://www.example.com/weblog/show?order=desc&page=1"
     assert current_page?({ :action => "show", :controller => "weblog" })
     assert current_page?("http://www.example.com/weblog/show")
   end
-  
+
   def test_current_page_with_params_that_match
     @controller.request = RequestMock.new("http://www.example.com/weblog/show?order=desc&page=1")
     @controller.url = "http://www.example.com/weblog/show?order=desc&page=1"
     assert current_page?({ :action => "show", :controller => "weblog", :order => "desc", :page => "1" })
     assert current_page?("http://www.example.com/weblog/show?order=desc&amp;page=1")
   end
-  
+
   def test_link_unless_current
     @controller.request = RequestMock.new("http://www.example.com/weblog/show")
     @controller.url = "http://www.example.com/weblog/show"
@@ -288,7 +297,7 @@ class UrlHelperTest < ActionView::TestCase
     @controller.request = RequestMock.new("http://www.example.com/weblog/show?order=desc&page=1")
     @controller.url = "http://www.example.com/weblog/show?order=desc&page=1"
     assert_equal "Showing", link_to_unless_current("Showing", { :action => "show", :controller => "weblog", :order=>'desc', :page=>'1' })
-    assert_equal "Showing", link_to_unless_current("Showing", "http://www.example.com/weblog/show?order=desc&amp;page=1")
+    assert_equal "Showing", link_to_unless_current("Showing", "http://www.example.com/weblog/show?order=desc&page=1")
     assert_equal "Showing", link_to_unless_current("Showing", "http://www.example.com/weblog/show?order=desc&page=1")
 
     @controller.request = RequestMock.new("http://www.example.com/weblog/show?order=desc")
@@ -298,7 +307,7 @@ class UrlHelperTest < ActionView::TestCase
 
     @controller.request = RequestMock.new("http://www.example.com/weblog/show?order=desc&page=1")
     @controller.url = "http://www.example.com/weblog/show?order=desc&page=2"
-    assert_equal "<a href=\"http://www.example.com/weblog/show?order=desc&amp;page=2\">Showing</a>", link_to_unless_current("Showing", { :action => "show", :controller => "weblog" })
+    assert_equal "<a href=\"http://www.example.com/weblog/show?order=desc&page=2\">Showing</a>", link_to_unless_current("Showing", { :action => "show", :controller => "weblog" })
     assert_equal "<a href=\"http://www.example.com/weblog/show?order=desc&amp;page=2\">Showing</a>", link_to_unless_current("Showing", "http://www.example.com/weblog/show?order=desc&page=2")
 
 
@@ -337,7 +346,7 @@ class UrlHelperTest < ActionView::TestCase
   end
 
   def test_mail_to_with_img
-    assert_dom_equal %(<a href="mailto:feedback@example.com"><img src="/feedback.png" /></a>), mail_to('feedback@example.com', '<img src="/feedback.png" />')
+    assert_dom_equal %(<a href="mailto:feedback@example.com"><img src="/feedback.png" /></a>), mail_to('feedback@example.com', '<img src="/feedback.png" />'.html_safe)
   end
 
   def test_mail_to_with_hex
@@ -353,18 +362,23 @@ class UrlHelperTest < ActionView::TestCase
     assert_dom_equal "<script type=\"text/javascript\">eval(decodeURIComponent('%64%6f%63%75%6d%65%6e%74%2e%77%72%69%74%65%28%27%3c%61%20%68%72%65%66%3d%22%6d%61%69%6c%74%6f%3a%6d%65%40%64%6f%6d%61%69%6e%2e%63%6f%6d%22%3e%4d%79%20%65%6d%61%69%6c%3c%2f%61%3e%27%29%3b'))</script>", mail_to("me@domain.com", "My email", :encode => "javascript", :replace_at => "(at)", :replace_dot => "(dot)")
     assert_dom_equal "<script type=\"text/javascript\">eval(decodeURIComponent('%64%6f%63%75%6d%65%6e%74%2e%77%72%69%74%65%28%27%3c%61%20%68%72%65%66%3d%22%6d%61%69%6c%74%6f%3a%6d%65%40%64%6f%6d%61%69%6e%2e%63%6f%6d%22%3e%6d%65%28%61%74%29%64%6f%6d%61%69%6e%28%64%6f%74%29%63%6f%6d%3c%2f%61%3e%27%29%3b'))</script>", mail_to("me@domain.com", nil, :encode => "javascript", :replace_at => "(at)", :replace_dot => "(dot)")
   end
-  
+
   def protect_against_forgery?
     false
   end
+
+  private
+    def sort_query_string_params(uri)
+      path, qs = uri.split('?')
+      qs = qs.split('&').sort.join('&') if qs
+      qs ? "#{path}?#{qs}" : path
+    end
 end
 
-class UrlHelperWithControllerTest < ActionView::TestCase
+class UrlHelperControllerTest < ActionController::TestCase
   class UrlHelperController < ActionController::Base
-    def self.controller_path; 'url_helper_with_controller' end
-
     def show_url_for
-      render :inline => "<%= url_for :controller => 'url_helper_with_controller', :action => 'show_url_for' %>"
+      render :inline => "<%= url_for :controller => 'url_helper_controller_test/url_helper', :action => 'show_url_for' %>"
     end
 
     def show_named_route
@@ -378,37 +392,30 @@ class UrlHelperWithControllerTest < ActionView::TestCase
     def rescue_action(e) raise e end
   end
 
-  tests ActionView::Helpers::UrlHelper
-
-  def setup
-    super
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
-    @controller = UrlHelperController.new
-  end
+  tests UrlHelperController
 
   def test_url_for_shows_only_path
     get :show_url_for
-    assert_equal '/url_helper_with_controller/show_url_for', @response.body
+    assert_equal '/url_helper_controller_test/url_helper/show_url_for', @response.body
   end
 
   def test_named_route_url_shows_host_and_path
     with_url_helper_routing do
       get :show_named_route, :kind => 'url'
-      assert_equal 'http://test.host/url_helper_with_controller/show_named_route', @response.body
+      assert_equal 'http://test.host/url_helper_controller_test/url_helper/show_named_route', @response.body
     end
   end
 
   def test_named_route_path_shows_only_path
     with_url_helper_routing do
       get :show_named_route, :kind => 'path'
-      assert_equal '/url_helper_with_controller/show_named_route', @response.body
+      assert_equal '/url_helper_controller_test/url_helper/show_named_route', @response.body
     end
   end
 
   def test_url_for_nil_returns_current_path
     get :nil_url_for
-    assert_equal '/url_helper_with_controller/nil_url_for', @response.body
+    assert_equal '/url_helper_controller_test/url_helper/nil_url_for', @response.body
   end
 
   def test_named_route_should_show_host_and_path_using_controller_default_url_options
@@ -420,7 +427,7 @@ class UrlHelperWithControllerTest < ActionView::TestCase
 
     with_url_helper_routing do
       get :show_named_route, :kind => 'url'
-      assert_equal 'http://testtwo.host/url_helper_with_controller/show_named_route', @response.body
+      assert_equal 'http://testtwo.host/url_helper_controller_test/url_helper/show_named_route', @response.body
     end
   end
 
@@ -428,37 +435,33 @@ class UrlHelperWithControllerTest < ActionView::TestCase
     def with_url_helper_routing
       with_routing do |set|
         set.draw do |map|
-          map.show_named_route 'url_helper_with_controller/show_named_route', :controller => 'url_helper_with_controller', :action => 'show_named_route'
+          match 'url_helper_controller_test/url_helper/show_named_route', :to => 'url_helper_controller_test/url_helper#show_named_route', :as => :show_named_route
         end
         yield
       end
     end
 end
 
-class LinkToUnlessCurrentWithControllerTest < ActionView::TestCase
-  class TasksController < ActionController::Base
-    def self.controller_path; 'tasks' end
-
-    def index
-      render_default
-    end
-
-    def show
-      render_default
-    end
-
-    def rescue_action(e) raise e end
-
-    protected
-      def render_default
-        render :inline =>
-          "<%= link_to_unless_current(\"tasks\", tasks_path) %>\n" +
-          "<%= link_to_unless_current(\"tasks\", tasks_url) %>"
-      end
+class TasksController < ActionController::Base
+  def index
+    render_default
   end
 
-  tests ActionView::Helpers::UrlHelper
+  def show
+    render_default
+  end
 
+  def rescue_action(e) raise e end
+
+  protected
+    def render_default
+      render :inline =>
+        "<%= link_to_unless_current(\"tasks\", tasks_path) %>\n" +
+        "<%= link_to_unless_current(\"tasks\", tasks_url) %>"
+    end
+end
+
+class LinkToUnlessCurrentWithControllerTest < ActionController::TestCase
   def setup
     super
     @request    = ActionController::TestRequest.new
@@ -486,7 +489,7 @@ class LinkToUnlessCurrentWithControllerTest < ActionView::TestCase
     def with_restful_routing
       with_routing do |set|
         set.draw do |map|
-          map.resources :tasks
+          resources :tasks
         end
         yield
       end
@@ -496,14 +499,14 @@ end
 class Workshop
   extend ActiveModel::Naming
   include ActiveModel::Conversion
-  attr_accessor :id, :new_record
+  attr_accessor :id
 
-  def initialize(id, new_record)
-    @id, @new_record = id, new_record
+  def initialize(id)
+    @id = id
   end
 
-  def new_record?
-    @new_record
+  def persisted?
+    id.present?
   end
 
   def to_s
@@ -514,14 +517,14 @@ end
 class Session
   extend ActiveModel::Naming
   include ActiveModel::Conversion
-  attr_accessor :id, :workshop_id, :new_record
+  attr_accessor :id, :workshop_id
 
-  def initialize(id, new_record)
-    @id, @new_record = id, new_record
+  def initialize(id)
+    @id = id
   end
 
-  def new_record?
-    @new_record
+  def persisted?
+    id.present?
   end
 
   def to_s
@@ -529,47 +532,41 @@ class Session
   end
 end
 
-class PolymorphicControllerTest < ActionView::TestCase
-  class WorkshopsController < ActionController::Base
-    def self.controller_path; 'workshops' end
-
-    def index
-      @workshop = Workshop.new(1, true)
-      render :inline => "<%= url_for(@workshop) %>\n<%= link_to('Workshop', @workshop) %>"
-    end
-
-    def show
-      @workshop = Workshop.new(params[:id], false)
-      render :inline => "<%= url_for(@workshop) %>\n<%= link_to('Workshop', @workshop) %>"
-    end
-
-    def rescue_action(e) raise e end
+class WorkshopsController < ActionController::Base
+  def index
+    @workshop = Workshop.new(nil)
+    render :inline => "<%= url_for(@workshop) %>\n<%= link_to('Workshop', @workshop) %>"
   end
 
-  class SessionsController < ActionController::Base
-    def self.controller_path; 'sessions' end
-
-    def index
-      @workshop = Workshop.new(params[:workshop_id], false)
-      @session = Session.new(1, true)
-      render :inline => "<%= url_for([@workshop, @session]) %>\n<%= link_to('Session', [@workshop, @session]) %>"
-    end
-
-    def show
-      @workshop = Workshop.new(params[:workshop_id], false)
-      @session = Session.new(params[:id], false)
-      render :inline => "<%= url_for([@workshop, @session]) %>\n<%= link_to('Session', [@workshop, @session]) %>"
-    end
-
-    def rescue_action(e) raise e end
+  def show
+    @workshop = Workshop.new(params[:id])
+    render :inline => "<%= url_for(@workshop) %>\n<%= link_to('Workshop', @workshop) %>"
   end
 
-  tests ActionView::Helpers::UrlHelper
+  def rescue_action(e) raise e end
+end
 
+class SessionsController < ActionController::Base
+  def index
+    @workshop = Workshop.new(params[:workshop_id])
+    @session = Session.new(nil)
+    render :inline => "<%= url_for([@workshop, @session]) %>\n<%= link_to('Session', [@workshop, @session]) %>"
+  end
+
+  def show
+    @workshop = Workshop.new(params[:workshop_id])
+    @session = Session.new(params[:id])
+    render :inline => "<%= url_for([@workshop, @session]) %>\n<%= link_to('Session', [@workshop, @session]) %>"
+  end
+
+  def rescue_action(e) raise e end
+end
+
+class PolymorphicControllerTest < ActionController::TestCase
   def setup
     super
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
+    @request  = ActionController::TestRequest.new
+    @response = ActionController::TestResponse.new
   end
 
   def test_new_resource
@@ -612,8 +609,8 @@ class PolymorphicControllerTest < ActionView::TestCase
     def with_restful_routing
       with_routing do |set|
         set.draw do |map|
-          map.resources :workshops do |w|
-            w.resources :sessions
+          resources :workshops do
+            resources :sessions
           end
         end
         yield

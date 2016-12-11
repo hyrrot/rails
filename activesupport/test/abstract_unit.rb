@@ -1,12 +1,13 @@
-ORIG_ARGV = ARGV.dup
+require File.expand_path('../../../load_paths', __FILE__)
 
-require 'rubygems'
 require 'test/unit'
+require 'mocha'
 
 ENV['NO_RELOAD'] = '1'
-$:.unshift "#{File.dirname(__FILE__)}/../lib"
 require 'active_support'
-require 'active_support/test_case'
+
+# Include shims until we get off 1.8.6
+require 'active_support/ruby/shim'
 
 def uses_memcached(test_name)
   require 'memcache'

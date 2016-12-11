@@ -30,18 +30,8 @@ module Backoffice
 end
 
 class ResourcesTest < ActionController::TestCase
-  # The assertions in these tests are incompatible with the hash method
-  # optimisation.  This could indicate user level problems
-  def setup
-    ActionController::Base.optimise_named_routes = false
-  end
-
-  def teardown
-    ActionController::Base.optimise_named_routes = true
-  end
-
   def test_should_arrange_actions
-    resource = ActionController::Resources::Resource.new(:messages,
+    resource = ActionDispatch::Routing::DeprecatedMapper::Resource.new(:messages,
       :collection => { :rss => :get, :reorder => :post, :csv => :post },
       :member     => { :rss => :get, :atom => :get, :upload => :post, :fix => :post },
       :new        => { :preview => :get, :draft => :get })
@@ -54,18 +44,18 @@ class ResourcesTest < ActionController::TestCase
   end
 
   def test_should_resource_controller_name_equal_resource_name_by_default
-    resource = ActionController::Resources::Resource.new(:messages, {})
+    resource = ActionDispatch::Routing::DeprecatedMapper::Resource.new(:messages, {})
     assert_equal 'messages', resource.controller
   end
 
   def test_should_resource_controller_name_equal_controller_option
-    resource = ActionController::Resources::Resource.new(:messages, :controller => 'posts')
+    resource = ActionDispatch::Routing::DeprecatedMapper::Resource.new(:messages, :controller => 'posts')
     assert_equal 'posts', resource.controller
   end
 
   def test_should_all_singleton_paths_be_the_same
     [ :path, :nesting_path_prefix, :member_path ].each do |method|
-      resource = ActionController::Resources::SingletonResource.new(:messages, :path_prefix => 'admin')
+      resource = ActionDispatch::Routing::DeprecatedMapper::SingletonResource.new(:messages, :path_prefix => 'admin')
       assert_equal 'admin/messages', resource.send(method)
     end
   end
@@ -76,8 +66,52 @@ class ResourcesTest < ActionController::TestCase
     end
   end
 
+  def test_override_paths_for_member_and_collection_methods
+    collection_methods = { 'rss' => :get, 'reorder' => :post, 'csv' => :post }
+    member_methods    = { 'rss' => :get, :atom => :get, :upload => :post, :fix => :post }
+    path_names = {:new => 'nuevo', 'rss' => 'canal', :fix => 'corrigir' }
+
+    with_restful_routing :messages,
+        :collection => collection_methods,
+        :member => member_methods,
+        :path_names => path_names do
+
+      assert_restful_routes_for :messages,
+          :collection => collection_methods,
+          :member => member_methods,
+          :path_names => path_names do |options|
+        member_methods.each do |action, method|
+          assert_recognizes(options.merge(:action => action.to_s, :id => '1'),
+            :path => "/messages/1/#{path_names[action] || action}",
+            :method => method)
+        end
+
+        collection_methods.each do |action, method|
+          assert_recognizes(options.merge(:action => action),
+            :path => "/messages/#{path_names[action] || action}",
+            :method => method)
+        end
+      end
+
+      assert_restful_named_routes_for :messages,
+          :collection => collection_methods,
+          :member => member_methods,
+          :path_names => path_names do |options|
+
+        collection_methods.keys.each do |action|
+          assert_named_route "/messages/#{path_names[action] || action}", "#{action}_messages_path", :action => action
+        end
+
+        member_methods.keys.each do |action|
+          assert_named_route "/messages/1/#{path_names[action] || action}", "#{action}_message_path", :action => action, :id => "1"
+        end
+
+      end
+    end
+  end
+
   def test_override_paths_for_default_restful_actions
-    resource = ActionController::Resources::Resource.new(:messages,
+    resource = ActionDispatch::Routing::DeprecatedMapper::Resource.new(:messages,
       :path_names => {:new => 'nuevo', :edit => 'editar'})
     assert_equal resource.new_path, "#{resource.path}/nuevo"
   end
@@ -91,7 +125,7 @@ class ResourcesTest < ActionController::TestCase
 
   def test_with_custom_conditions
     with_restful_routing :messages, :conditions => { :subdomain => 'app' } do
-      assert_equal 'app', ActionController::Routing::Routes.named_routes.routes[:messages].conditions[:subdomain]
+      assert ActionDispatch::Routing::Routes.recognize_path("/messages", :method => :get, :subdomain => 'app')
     end
   end
 
@@ -237,7 +271,7 @@ class ResourcesTest < ActionController::TestCase
 
   def test_with_member_action_and_requirement
     expected_options = {:controller => 'messages', :action => 'mark', :id => '1.1.1'}
-  
+
     with_restful_routing(:messages, :requirements => {:id => /[0-9]\.[0-9]\.[0-9]/}, :member => { :mark => :get }) do
       assert_recognizes(expected_options, :path => 'messages/1.1.1/mark', :method => :get)
     end
@@ -260,27 +294,27 @@ class ResourcesTest < ActionController::TestCase
     end
   end
 
-  def test_member_when_changed_default_restful_actions_and_path_names_not_specified
-    default_path_names = ActionController::Base.resources_path_names
-    ActionController::Base.resources_path_names = {:new => 'nuevo', :edit => 'editar'}
-
-    with_restful_routing :messages do
-      new_options = { :action => 'new', :controller => 'messages' }
-      new_path = "/messages/nuevo"
-      edit_options = { :action => 'edit', :id => '1', :controller => 'messages' }
-      edit_path = "/messages/1/editar"
-
-      assert_restful_routes_for :messages do |options|
-        assert_recognizes(options.merge(new_options), :path => new_path, :method => :get)
-      end
-
-      assert_restful_routes_for :messages do |options|
-        assert_recognizes(options.merge(edit_options), :path => edit_path, :method => :get)
-      end
-    end
-  ensure
-    ActionController::Base.resources_path_names = default_path_names
-  end
+  # def test_member_when_changed_default_restful_actions_and_path_names_not_specified
+  #   default_path_names = ActionController::Base.resources_path_names
+  #   ActionController::Base.resources_path_names = {:new => 'nuevo', :edit => 'editar'}
+  #
+  #   with_restful_routing :messages do
+  #     new_options = { :action => 'new', :controller => 'messages' }
+  #     new_path = "/messages/nuevo"
+  #     edit_options = { :action => 'edit', :id => '1', :controller => 'messages' }
+  #     edit_path = "/messages/1/editar"
+  #
+  #     assert_restful_routes_for :messages do |options|
+  #       assert_recognizes(options.merge(new_options), :path => new_path, :method => :get)
+  #     end
+  #
+  #     assert_restful_routes_for :messages do |options|
+  #       assert_recognizes(options.merge(edit_options), :path => edit_path, :method => :get)
+  #     end
+  #   end
+  # ensure
+  #   ActionController::Base.resources_path_names = default_path_names
+  # end
 
   def test_with_two_member_actions_with_same_method
     [:put, :post].each do |method|
@@ -359,8 +393,8 @@ class ResourcesTest < ActionController::TestCase
     with_restful_routing :messages do
       assert_restful_routes_for :messages do |options|
         assert_recognizes(options.merge(:action => "new"), :path => "/messages/new", :method => :get)
-        assert_raise(ActionController::MethodNotAllowed) do
-          ActionController::Routing::Routes.recognize_path("/messages/new", :method => :post)
+        assert_raise(ActionController::RoutingError) do
+          ActionDispatch::Routing::Routes.recognize_path("/messages/new", :method => :post)
         end
       end
     end
@@ -470,7 +504,7 @@ class ResourcesTest < ActionController::TestCase
 
   def test_restful_routes_dont_generate_duplicates
     with_restful_routing :messages do
-      routes = ActionController::Routing::Routes.routes
+      routes = ActionDispatch::Routing::Routes.routes
       routes.each do |route|
         routes.each do |r|
           next if route === r # skip the comparison instance
@@ -645,11 +679,11 @@ class ResourcesTest < ActionController::TestCase
       options = { :controller => controller_name.to_s }
       collection_path = "/#{controller_name}"
 
-      assert_raise(ActionController::MethodNotAllowed) do
+      assert_raise(ActionController::RoutingError) do
         assert_recognizes(options.merge(:action => 'update'), :path => collection_path, :method => :put)
       end
 
-      assert_raise(ActionController::MethodNotAllowed) do
+      assert_raise(ActionController::RoutingError) do
         assert_recognizes(options.merge(:action => 'destroy'), :path => collection_path, :method => :delete)
       end
     end
@@ -657,8 +691,8 @@ class ResourcesTest < ActionController::TestCase
 
   def test_should_not_allow_invalid_head_method_for_member_routes
     with_routing do |set|
-      set.draw do |map|
-        assert_raise(ArgumentError) do
+      assert_raise(ArgumentError) do
+        set.draw do |map|
           map.resources :messages, :member => {:something => :head}
         end
       end
@@ -667,8 +701,8 @@ class ResourcesTest < ActionController::TestCase
 
   def test_should_not_allow_invalid_http_methods_for_member_routes
     with_routing do |set|
-      set.draw do |map|
-        assert_raise(ArgumentError) do
+      assert_raise(ArgumentError) do
+        set.draw do |map|
           map.resources :messages, :member => {:something => :invalid}
         end
       end
@@ -1086,7 +1120,8 @@ class ResourcesTest < ActionController::TestCase
         map.resource :product
       end
 
-      assert_equal :get, set.named_routes.routes[:product].conditions[:method]
+      assert_routing '/product', :controller => 'products', :action => 'show'
+      assert set.recognize_path("/product", :method => :get)
     end
   end
 
@@ -1333,7 +1368,7 @@ class ResourcesTest < ActionController::TestCase
     end
 
     def assert_not_recognizes(expected_options, path)
-      assert_raise ActionController::RoutingError, ActionController::MethodNotAllowed, Assertion do
+      assert_raise ActionController::RoutingError, Assertion do
         assert_recognizes(expected_options, path)
       end
     end

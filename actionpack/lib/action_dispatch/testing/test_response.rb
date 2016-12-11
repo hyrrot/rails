@@ -1,6 +1,6 @@
 module ActionDispatch
-  # Integration test methods such as ActionController::Integration::Session#get
-  # and ActionController::Integration::Session#post return objects of class
+  # Integration test methods such as ActionDispatch::Integration::Session#get
+  # and ActionDispatch::Integration::Session#post return objects of class
   # TestResponse, which represent the HTTP response results of the requested
   # controller actions.
   #
@@ -34,6 +34,11 @@ module ActionDispatch
       def layout
         ActiveSupport::Deprecation.warn("response.layout has been deprecated. Use template.layout instead", caller)
         @template.layout
+      end
+
+      def redirected_to
+        ::ActiveSupport::Deprecation.warn("response.redirected_to is deprecated. Use response.redirect_url instead", caller)
+        redirect_url
       end
 
       def redirect_url_match?(pattern)

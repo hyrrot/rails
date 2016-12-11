@@ -5,36 +5,22 @@ module ActiveModel
   module Serializers
     module JSON
       extend ActiveSupport::Concern
+      include ActiveModel::Serialization
 
       included do
         extend ActiveModel::Naming
 
-        cattr_accessor :include_root_in_json, :instance_writer => false
-      end
-
-      class Serializer < ActiveModel::Serializer
-        def serializable_hash
-          model = super
-          @serializable.include_root_in_json ?
-            { @serializable.class.model_name.element => model } :
-            model
-        end
-
-        def serialize
-          ActiveSupport::JSON.encode(serializable_hash)
-        end
+        cattr_accessor :include_root_in_json, :instance_writer => true
       end
 
       # Returns a JSON string representing the model. Some configuration is
       # available through +options+.
       #
-      # The option <tt>ActiveRecord::Base.include_root_in_json</tt> controls the
-      # top-level behavior of to_json. In a new Rails application, it is set to 
-      # <tt>true</tt> in initializers/new_rails_defaults.rb. When it is <tt>true</tt>,
+      # The option <tt>ActiveModel::Base.include_root_in_json</tt> controls the
+      # top-level behavior of to_json. It is true by default. When it is <tt>true</tt>,
       # to_json will emit a single root node named after the object's type. For example:
       #
       #   konata = User.find(1)
-      #   ActiveRecord::Base.include_root_in_json = true
       #   konata.to_json
       #   # => { "user": {"id": 1, "name": "Konata Izumi", "age": 16,
       #                   "created_at": "2006/08/01", "awesome": true} }
@@ -92,7 +78,9 @@ module ActiveModel
       #                   {"comments": [{"body": "Don't think too hard"}],
       #                    "title": "So I was thinking"}]}
       def encode_json(encoder)
-        Serializer.new(self, encoder.options).to_s
+        hash = serializable_hash(encoder.options)
+        hash = { self.class.model_name.element => hash } if include_root_in_json
+        ActiveSupport::JSON.encode(hash)
       end
 
       def as_json(options = nil)

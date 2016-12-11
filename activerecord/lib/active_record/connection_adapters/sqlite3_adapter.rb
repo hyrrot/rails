@@ -24,11 +24,17 @@ module ActiveRecord
 
   module ConnectionAdapters #:nodoc:
     class SQLite3Adapter < SQLiteAdapter # :nodoc:
-      def table_structure(table_name)
-        structure = @connection.table_info(quote_table_name(table_name))
-        raise(ActiveRecord::StatementInvalid, "Could not find table '#{table_name}'") if structure.empty?
-        structure
+
+      # Returns the current database encoding format as a string, eg: 'UTF-8'
+      def encoding
+        if @connection.respond_to?(:encoding)
+          @connection.encoding[0]['encoding']
+        else
+          encoding = @connection.send(:get_query_pragma, 'encoding')
+          encoding[0]['encoding']
+        end
       end
+
     end
   end
 end

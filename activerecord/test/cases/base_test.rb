@@ -201,7 +201,7 @@ class BasicsTest < ActiveRecord::TestCase
     topic = Topic.new(:title => "New Topic")
     assert topic.save!
 
-    reply = Reply.new
+    reply = WrongReply.new
     assert_raise(ActiveRecord::RecordInvalid) { reply.save! }
   end
 
@@ -422,11 +422,6 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
 
-  def test_reader_for_invalid_column_names
-    Topic.send(:define_read_method, "mumub-jumbo".to_sym, "mumub-jumbo", nil)
-    assert !Topic.generated_methods.include?("mumub-jumbo")
-  end
-
   def test_non_attribute_access_and_assignment
     topic = Topic.new
     assert !topic.respond_to?("mumbo")
@@ -466,6 +461,60 @@ class BasicsTest < ActiveRecord::TestCase
       assert_equal 11, Topic.find(1).written_on.sec
       assert_equal 223300, Topic.find(1).written_on.usec
       assert_equal 9900, Topic.find(2).written_on.usec
+    end
+  end
+
+  def test_preserving_time_objects_with_local_time_conversion_to_default_timezone_utc
+    with_env_tz 'America/New_York' do
+      with_active_record_default_timezone :utc do
+        time = Time.local(2000)
+        topic = Topic.create('written_on' => time)
+        saved_time = Topic.find(topic.id).written_on
+        assert_equal time, saved_time
+        assert_equal [0, 0, 0, 1, 1, 2000, 6, 1, false, "EST"], time.to_a
+        assert_equal [0, 0, 5, 1, 1, 2000, 6, 1, false, "UTC"], saved_time.to_a
+      end
+    end
+  end
+
+  def test_preserving_time_objects_with_time_with_zone_conversion_to_default_timezone_utc
+    with_env_tz 'America/New_York' do
+      with_active_record_default_timezone :utc do
+        Time.use_zone 'Central Time (US & Canada)' do
+          time = Time.zone.local(2000)
+          topic = Topic.create('written_on' => time)
+          saved_time = Topic.find(topic.id).written_on
+          assert_equal time, saved_time
+          assert_equal [0, 0, 0, 1, 1, 2000, 6, 1, false, "CST"], time.to_a
+          assert_equal [0, 0, 6, 1, 1, 2000, 6, 1, false, "UTC"], saved_time.to_a
+        end
+      end
+    end
+  end
+
+  def test_preserving_time_objects_with_utc_time_conversion_to_default_timezone_local
+    with_env_tz 'America/New_York' do
+      time = Time.utc(2000)
+      topic = Topic.create('written_on' => time)
+      saved_time = Topic.find(topic.id).written_on
+      assert_equal time, saved_time
+      assert_equal [0, 0, 0, 1, 1, 2000, 6, 1, false, "UTC"], time.to_a
+      assert_equal [0, 0, 19, 31, 12, 1999, 5, 365, false, "EST"], saved_time.to_a
+    end
+  end
+
+  def test_preserving_time_objects_with_time_with_zone_conversion_to_default_timezone_local
+    with_env_tz 'America/New_York' do
+      with_active_record_default_timezone :local do
+        Time.use_zone 'Central Time (US & Canada)' do
+          time = Time.zone.local(2000)
+          topic = Topic.create('written_on' => time)
+          saved_time = Topic.find(topic.id).written_on
+          assert_equal time, saved_time
+          assert_equal [0, 0, 0, 1, 1, 2000, 6, 1, false, "CST"], time.to_a
+          assert_equal [0, 0, 1, 1, 1, 2000, 6, 1, false, "EST"], saved_time.to_a
+        end
+      end
     end
   end
 
@@ -629,6 +678,16 @@ class BasicsTest < ActiveRecord::TestCase
 
     Topic.decrement_counter("replies_count", 2)
     assert_equal -2, Topic.find(2).replies_count
+  end
+
+  def test_reset_counters
+    assert_equal 1, Topic.find(1).replies_count
+
+    Topic.increment_counter("replies_count", 1)
+    assert_equal 2, Topic.find(1).replies_count
+
+    Topic.reset_counters(1, :replies)
+    assert_equal 1, Topic.find(1).replies_count
   end
 
   def test_update_counter
@@ -900,6 +959,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_update_attributes!
+    Reply.validates_presence_of(:title)
     reply = Reply.find(2)
     assert_equal "The Second Topic of the day", reply.title
     assert_equal "Have a nice day", reply.content
@@ -915,6 +975,8 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal "Have a nice day", reply.content
 
     assert_raise(ActiveRecord::RecordInvalid) { reply.update_attributes!(:title => nil, :content => "Have a nice evening") }
+  ensure
+    Reply.reset_callbacks(:validate)
   end
 
   def test_mass_assignment_should_raise_exception_if_accessible_and_protected_attribute_writers_are_both_used
@@ -930,7 +992,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_mass_assignment_protection_against_class_attribute_writers
-    [:logger, :configurations, :primary_key_prefix_type, :table_name_prefix, :table_name_suffix, :pluralize_table_names, :colorize_logging,
+    [:logger, :configurations, :primary_key_prefix_type, :table_name_prefix, :table_name_suffix, :pluralize_table_names,
       :default_timezone, :schema_format, :lock_optimistically, :record_timestamps].each do |method|
       assert  Task.respond_to?(method)
       assert  Task.respond_to?("#{method}=")
@@ -1021,13 +1083,58 @@ class BasicsTest < ActiveRecord::TestCase
     assert_date_from_db Date.new(2004, 6, 24), topic.last_read.to_date
   end
 
-  def test_multiparameter_attributes_on_date_with_empty_date
+  def test_multiparameter_attributes_on_date_with_empty_year
+    attributes = { "last_read(1i)" => "", "last_read(2i)" => "6", "last_read(3i)" => "24" }
+    topic = Topic.find(1)
+    topic.attributes = attributes
+    # note that extra #to_date call allows test to pass for Oracle, which
+    # treats dates/times the same
+    assert_date_from_db Date.new(1, 6, 24), topic.last_read.to_date
+  end
+
+  def test_multiparameter_attributes_on_date_with_empty_month
+    attributes = { "last_read(1i)" => "2004", "last_read(2i)" => "", "last_read(3i)" => "24" }
+    topic = Topic.find(1)
+    topic.attributes = attributes
+    # note that extra #to_date call allows test to pass for Oracle, which
+    # treats dates/times the same
+    assert_date_from_db Date.new(2004, 1, 24), topic.last_read.to_date
+  end
+
+  def test_multiparameter_attributes_on_date_with_empty_day
     attributes = { "last_read(1i)" => "2004", "last_read(2i)" => "6", "last_read(3i)" => "" }
     topic = Topic.find(1)
     topic.attributes = attributes
     # note that extra #to_date call allows test to pass for Oracle, which
     # treats dates/times the same
     assert_date_from_db Date.new(2004, 6, 1), topic.last_read.to_date
+  end
+
+  def test_multiparameter_attributes_on_date_with_empty_day_and_year
+    attributes = { "last_read(1i)" => "", "last_read(2i)" => "6", "last_read(3i)" => "" }
+    topic = Topic.find(1)
+    topic.attributes = attributes
+    # note that extra #to_date call allows test to pass for Oracle, which
+    # treats dates/times the same
+    assert_date_from_db Date.new(1, 6, 1), topic.last_read.to_date
+  end
+
+  def test_multiparameter_attributes_on_date_with_empty_day_and_month
+    attributes = { "last_read(1i)" => "2004", "last_read(2i)" => "", "last_read(3i)" => "" }
+    topic = Topic.find(1)
+    topic.attributes = attributes
+    # note that extra #to_date call allows test to pass for Oracle, which
+    # treats dates/times the same
+    assert_date_from_db Date.new(2004, 1, 1), topic.last_read.to_date
+  end
+
+  def test_multiparameter_attributes_on_date_with_empty_year_and_month
+    attributes = { "last_read(1i)" => "", "last_read(2i)" => "", "last_read(3i)" => "24" }
+    topic = Topic.find(1)
+    topic.attributes = attributes
+    # note that extra #to_date call allows test to pass for Oracle, which
+    # treats dates/times the same
+    assert_date_from_db Date.new(1, 1, 24), topic.last_read.to_date
   end
 
   def test_multiparameter_attributes_on_date_with_all_empty
@@ -1222,6 +1329,35 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal Topic.find(1).new_record?, false
   end
 
+  def test_destroyed_returns_boolean
+    developer = Developer.first
+    assert_equal developer.destroyed?, false
+    developer.destroy
+    assert_equal developer.destroyed?, true
+
+    developer = Developer.last
+    assert_equal developer.destroyed?, false
+    developer.delete
+    assert_equal developer.destroyed?, true
+  end
+
+  def test_persisted_returns_boolean
+    developer = Developer.new(:name => "Jose")
+    assert_equal developer.persisted?, false
+    developer.save!
+    assert_equal developer.persisted?, true
+
+    developer = Developer.first
+    assert_equal developer.persisted?, true
+    developer.destroy
+    assert_equal developer.persisted?, false
+
+    developer = Developer.last
+    assert_equal developer.persisted?, true
+    developer.delete
+    assert_equal developer.persisted?, false
+  end
+
   def test_clone
     topic = Topic.find(1)
     cloned_topic = nil
@@ -1241,7 +1377,7 @@ class BasicsTest < ActiveRecord::TestCase
     cloned_topic.title["a"] = "c"
     assert_equal "b", topic.title["a"]
 
-    #test if attributes set as part of after_initialize are cloned correctly
+    # test if attributes set as part of after_initialize are cloned correctly
     assert_equal topic.author_email_address, cloned_topic.author_email_address
 
     # test if saved clone object differs from original
@@ -1664,17 +1800,15 @@ class BasicsTest < ActiveRecord::TestCase
 
     assert_equal res4, res5
 
-    unless current_adapter?(:SQLite2Adapter, :DeprecatedSQLiteAdapter)
-      res6 = Post.count_by_sql "SELECT COUNT(DISTINCT p.id) FROM posts p, comments co WHERE p.#{QUOTED_TYPE} = 'Post' AND p.id=co.post_id"
-      res7 = nil
-      assert_nothing_raised do
-        res7 = Post.count(:conditions => "p.#{QUOTED_TYPE} = 'Post' AND p.id=co.post_id",
-                          :joins => "p, comments co",
-                          :select => "p.id",
-                          :distinct => true)
-      end
-      assert_equal res6, res7
+    res6 = Post.count_by_sql "SELECT COUNT(DISTINCT p.id) FROM posts p, comments co WHERE p.#{QUOTED_TYPE} = 'Post' AND p.id=co.post_id"
+    res7 = nil
+    assert_nothing_raised do
+      res7 = Post.count(:conditions => "p.#{QUOTED_TYPE} = 'Post' AND p.id=co.post_id",
+                        :joins => "p, comments co",
+                        :select => "p.id",
+                        :distinct => true)
     end
+    assert_equal res6, res7
   end
 
   def test_clear_association_cache_stored
@@ -1706,7 +1840,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_scoped_find_conditions
-    scoped_developers = Developer.with_scope(:find => { :conditions => 'salary > 90000' }) do
+    scoped_developers = Developer.send(:with_scope, :find => { :conditions => 'salary > 90000' }) do
       Developer.find(:all, :conditions => 'id < 5')
     end
     assert !scoped_developers.include?(developers(:david)) # David's salary is less than 90,000
@@ -1714,7 +1848,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_scoped_find_limit_offset
-    scoped_developers = Developer.with_scope(:find => { :limit => 3, :offset => 2 }) do
+    scoped_developers = Developer.send(:with_scope, :find => { :limit => 3, :offset => 2 }) do
       Developer.find(:all, :order => 'id')
     end
     assert !scoped_developers.include?(developers(:david))
@@ -1728,29 +1862,31 @@ class BasicsTest < ActiveRecord::TestCase
 
   def test_scoped_find_order
     # Test order in scope
-    scoped_developers = Developer.with_scope(:find => { :limit => 1, :order => 'salary DESC' }) do
+    scoped_developers = Developer.send(:with_scope, :find => { :limit => 1, :order => 'salary DESC' }) do
       Developer.find(:all)
     end
     assert_equal 'Jamis', scoped_developers.first.name
     assert scoped_developers.include?(developers(:jamis))
     # Test scope without order and order in find
-    scoped_developers = Developer.with_scope(:find => { :limit => 1 }) do
+    scoped_developers = Developer.send(:with_scope, :find => { :limit => 1 }) do
       Developer.find(:all, :order => 'salary DESC')
     end
     # Test scope order + find order, find has priority
-    scoped_developers = Developer.with_scope(:find => { :limit => 3, :order => 'id DESC' }) do
+    scoped_developers = Developer.send(:with_scope, :find => { :limit => 3, :order => 'id DESC' }) do
       Developer.find(:all, :order => 'salary ASC')
     end
     assert scoped_developers.include?(developers(:poor_jamis))
     assert scoped_developers.include?(developers(:david))
-    assert scoped_developers.include?(developers(:dev_10))
+    assert ! scoped_developers.include?(developers(:jamis))
+    assert_equal 3, scoped_developers.size
+
     # Test without scoped find conditions to ensure we get the right thing
     developers = Developer.find(:all, :order => 'id', :limit => 1)
     assert scoped_developers.include?(developers(:david))
   end
 
   def test_scoped_find_limit_offset_including_has_many_association
-    topics = Topic.with_scope(:find => {:limit => 1, :offset => 1, :include => :replies}) do
+    topics = Topic.send(:with_scope, :find => {:limit => 1, :offset => 1, :include => :replies}) do
       Topic.find(:all, :order => "topics.id")
     end
     assert_equal 1, topics.size
@@ -1758,7 +1894,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_scoped_find_order_including_has_many_association
-    developers = Developer.with_scope(:find => { :order => 'developers.salary DESC', :include => :projects }) do
+    developers = Developer.send(:with_scope, :find => { :order => 'developers.salary DESC', :include => :projects }) do
       Developer.find(:all)
     end
     assert developers.size >= 2
@@ -1768,7 +1904,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_scoped_find_with_group_and_having
-    developers = Developer.with_scope(:find => { :group => 'developers.salary', :having => "SUM(salary) > 10000", :select => "SUM(salary) as salary" }) do
+    developers = Developer.send(:with_scope, :find => { :group => 'developers.salary', :having => "SUM(salary) > 10000", :select => "SUM(salary) as salary" }) do
       Developer.find(:all)
     end
     assert_equal 3, developers.size
@@ -1783,8 +1919,14 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal Developer.find(:first, :order => 'id desc'), Developer.last
   end
 
+  def test_all
+    developers = Developer.all
+    assert_kind_of Array, developers
+    assert_equal Developer.find(:all), developers
+  end
+
   def test_all_with_conditions
-    assert_equal Developer.find(:all, :order => 'id desc'), Developer.all(:order => 'id desc')
+    assert_equal Developer.find(:all, :order => 'id desc'), Developer.order('id desc').all
   end
 
   def test_find_ordered_last
@@ -1808,7 +1950,7 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_find_scoped_ordered_last
-    last_developer = Developer.with_scope(:find => { :order => 'developers.salary ASC' }) do
+    last_developer = Developer.send(:with_scope, :find => { :order => 'developers.salary ASC' }) do
       Developer.find(:last)
     end
     assert_equal last_developer, Developer.find(:all, :order => 'developers.salary ASC').last
@@ -2010,8 +2152,11 @@ class BasicsTest < ActiveRecord::TestCase
   end
 
   def test_type_name_with_module_should_handle_beginning
+    ActiveRecord::Base.store_full_sti_class = false
     assert_equal 'ActiveRecord::Person', ActiveRecord::Base.send(:type_name_with_module, 'Person')
     assert_equal '::Person', ActiveRecord::Base.send(:type_name_with_module, '::Person')
+  ensure
+    ActiveRecord::Base.store_full_sti_class = true
   end
 
   def test_to_param_should_return_string
@@ -2086,9 +2231,9 @@ class BasicsTest < ActiveRecord::TestCase
     log = StringIO.new
     ActiveRecord::Base.logger = Logger.new(log)
     ActiveRecord::Base.logger.level = Logger::WARN
-    ActiveRecord::Base.benchmark("Debug Topic Count", Logger::DEBUG) { Topic.count }
-    ActiveRecord::Base.benchmark("Warn Topic Count",  Logger::WARN)  { Topic.count }
-    ActiveRecord::Base.benchmark("Error Topic Count", Logger::ERROR) { Topic.count }
+    ActiveRecord::Base.benchmark("Debug Topic Count", :level => :debug) { Topic.count }
+    ActiveRecord::Base.benchmark("Warn Topic Count",  :level => :warn)  { Topic.count }
+    ActiveRecord::Base.benchmark("Error Topic Count", :level => :error) { Topic.count }
     assert_no_match /Debug Topic Count/, log.string
     assert_match /Warn Topic Count/, log.string
     assert_match /Error Topic Count/, log.string
@@ -2100,8 +2245,8 @@ class BasicsTest < ActiveRecord::TestCase
     original_logger = ActiveRecord::Base.logger
     log = StringIO.new
     ActiveRecord::Base.logger = Logger.new(log)
-    ActiveRecord::Base.benchmark("Logging", Logger::DEBUG, true) { ActiveRecord::Base.logger.debug "Loud" }
-    ActiveRecord::Base.benchmark("Logging", Logger::DEBUG, false)  { ActiveRecord::Base.logger.debug "Quiet" }
+    ActiveRecord::Base.benchmark("Logging", :level => :debug, :silence => true) { ActiveRecord::Base.logger.debug "Loud" }
+    ActiveRecord::Base.benchmark("Logging", :level => :debug, :silence => false)  { ActiveRecord::Base.logger.debug "Quiet" }
     assert_no_match /Loud/, log.string
     assert_match /Quiet/, log.string
   ensure
@@ -2120,4 +2265,19 @@ class BasicsTest < ActiveRecord::TestCase
   def test_dup
     assert !Minimalistic.new.freeze.dup.frozen?
   end
+
+  protected
+    def with_env_tz(new_tz = 'US/Eastern')
+      old_tz, ENV['TZ'] = ENV['TZ'], new_tz
+      yield
+    ensure
+      old_tz ? ENV['TZ'] = old_tz : ENV.delete('TZ')
+    end
+
+    def with_active_record_default_timezone(zone)
+      old_zone, ActiveRecord::Base.default_timezone = ActiveRecord::Base.default_timezone, zone
+      yield
+    ensure
+      ActiveRecord::Base.default_timezone = old_zone
+    end
 end

@@ -6,8 +6,7 @@ module ActiveRecord
 
       def construct_scope
         { :create => construct_owner_attributes(@reflection),
-          :find   => { :from        => construct_from,
-                       :conditions  => construct_conditions,
+          :find   => { :conditions  => construct_conditions,
                        :joins       => construct_joins,
                        :include     => @reflection.options[:include] || @reflection.source_reflection.options[:include],
                        :select      => construct_select,
@@ -42,7 +41,7 @@ module ActiveRecord
       end
 
       def construct_from
-        @reflection.quoted_table_name
+        @reflection.table_name
       end
 
       def construct_select(custom_select = nil)
@@ -93,7 +92,7 @@ module ActiveRecord
       # Construct attributes for :through pointing to owner and associate.
       def construct_join_attributes(associate)
         # TODO: revist this to allow it for deletion, supposing dependent option is supported
-        raise ActiveRecord::HasManyThroughCantAssociateThroughHasManyReflection.new(@owner, @reflection) if @reflection.source_reflection.macro == :has_many
+        raise ActiveRecord::HasManyThroughCantAssociateThroughHasOneOrManyReflection.new(@owner, @reflection) if [:has_one, :has_many].include?(@reflection.source_reflection.macro)
 
         join_attributes = construct_owner_attributes(@reflection.through_reflection).merge(@reflection.source_reflection.primary_key_name => associate.id)
 
@@ -145,7 +144,7 @@ module ActiveRecord
       end
 
       def build_sti_condition
-        @reflection.through_reflection.klass.send(:type_condition)
+        @reflection.through_reflection.klass.send(:type_condition).to_sql
       end
 
       alias_method :sql_conditions, :conditions

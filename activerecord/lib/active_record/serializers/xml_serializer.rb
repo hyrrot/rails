@@ -2,6 +2,8 @@ require 'active_support/core_ext/hash/conversions'
 
 module ActiveRecord #:nodoc:
   module Serialization
+    include ActiveModel::Serializers::Xml
+
     # Builds an XML document to represent the model. Some configuration is
     # available through +options+. However more complicated cases should
     # override ActiveRecord::Base#to_xml.
@@ -77,7 +79,7 @@ module ActiveRecord #:nodoc:
     # closure created by a Proc, to_xml can be used to add elements that normally fall
     # outside of the scope of the model -- for example, generating and appending URLs
     # associated with models.
-    # 
+    #
     #   proc = Proc.new { |options, record| options[:builder].tag!('name-reverse', record.name.reverse) }
     #   firm.to_xml :procs => [ proc ]
     #
@@ -169,18 +171,15 @@ module ActiveRecord #:nodoc:
     #     end
     #   end
     def to_xml(options = {}, &block)
-      serializer = XmlSerializer.new(self, options)
-      block_given? ? serializer.to_s(&block) : serializer.to_s
-    end
-
-    def from_xml(xml)
-      self.attributes = Hash.from_xml(xml).values.first
-      self
+      XmlSerializer.new(self, options).serialize(&block)
     end
   end
 
   class XmlSerializer < ActiveModel::Serializers::Xml::Serializer #:nodoc:
-    include Serialization::RecordSerializer
+    def initialize(*args)
+      super
+      options[:except] |= Array.wrap(@serializable.class.inheritance_column)
+    end
 
     def serializable_attributes
       serializable_attribute_names.collect { |name| Attribute.new(name, @serializable) }
@@ -235,7 +234,9 @@ module ActiveRecord #:nodoc:
       builder.tag!(*args) do
         add_attributes
         procs = options.delete(:procs)
-        add_includes { |association, records, opts| add_associations(association, records, opts) }
+        @serializable.send(:serializable_add_includes, options) { |association, records, opts|
+          add_associations(association, records, opts)
+        }
         options[:procs] = procs
         add_procs
         yield builder if block_given?

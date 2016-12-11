@@ -6,10 +6,7 @@ require 'active_support/core_ext/module/delegation'
 require 'active_support/core_ext/object/instance_variables'
 require 'active_support/deprecation'
 
-require 'active_support/core_ext/date_time/conversions'
-require 'active_support/core_ext/time/conversions'
-require 'active_support/time_with_zone'
-require 'active_support/values/time_zone'
+require 'active_support/time'
 
 # Hack to load json gem first so we can overwrite its to_json.
 begin
@@ -68,6 +65,15 @@ module ActiveSupport
 
 
       ESCAPED_CHARS = {
+        "\x00" => '\u0000', "\x01" => '\u0001', "\x02" => '\u0002',
+        "\x03" => '\u0003', "\x04" => '\u0004', "\x05" => '\u0005',
+        "\x06" => '\u0006', "\x07" => '\u0007', "\x0B" => '\u000B',
+        "\x0E" => '\u000E', "\x0F" => '\u000F', "\x10" => '\u0010',
+        "\x11" => '\u0011', "\x12" => '\u0012', "\x13" => '\u0013',
+        "\x14" => '\u0014', "\x15" => '\u0015', "\x16" => '\u0016',
+        "\x17" => '\u0017', "\x18" => '\u0018', "\x19" => '\u0019',
+        "\x1A" => '\u001A', "\x1B" => '\u001B', "\x1C" => '\u001C',
+        "\x1D" => '\u001D', "\x1E" => '\u001E', "\x1F" => '\u001F',
         "\010" =>  '\b',
         "\f"   =>  '\f',
         "\n"   =>  '\n',
@@ -89,9 +95,9 @@ module ActiveSupport
         def escape_html_entities_in_json=(value)
           self.escape_regex = \
             if @escape_html_entities_in_json = value
-              /[\010\f\n\r\t"\\><&]/
+              /[\x00-\x1F"\\><&]/
             else
-              /[\010\f\n\r\t"\\]/
+              /[\x00-\x1F"\\]/
             end
         end
 
@@ -108,7 +114,8 @@ module ActiveSupport
         end
       end
 
-      self.escape_html_entities_in_json = true
+      self.use_standard_json_time_format = true
+      self.escape_html_entities_in_json  = false
     end
 
     CircularReferenceError = Deprecation::DeprecatedConstantProxy.new('ActiveSupport::JSON::CircularReferenceError', Encoding::CircularReferenceError)

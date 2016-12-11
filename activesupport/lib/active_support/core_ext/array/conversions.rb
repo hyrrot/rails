@@ -1,6 +1,7 @@
 require 'active_support/core_ext/hash/keys'
 require 'active_support/core_ext/hash/reverse_merge'
 require 'active_support/inflector'
+require 'active_support/i18n'
 
 class Array
   # Converts the array to a comma-separated sentence where the last element is joined by the connector word. Options:
@@ -11,19 +12,6 @@ class Array
     default_words_connector     = I18n.translate(:'support.array.words_connector',     :locale => options[:locale])
     default_two_words_connector = I18n.translate(:'support.array.two_words_connector', :locale => options[:locale])
     default_last_word_connector = I18n.translate(:'support.array.last_word_connector', :locale => options[:locale])
-
-    # Try to emulate to_sentences previous to 2.3
-    if options.has_key?(:connector) || options.has_key?(:skip_last_comma)
-      ::ActiveSupport::Deprecation.warn(":connector has been deprecated. Use :words_connector instead", caller) if options.has_key? :connector
-      ::ActiveSupport::Deprecation.warn(":skip_last_comma has been deprecated. Use :last_word_connector instead", caller) if options.has_key? :skip_last_comma
-
-      skip_last_comma = options.delete :skip_last_comma
-      if connector = options.delete(:connector)
-        options[:last_word_connector] ||= skip_last_comma ? connector : ", #{connector}"
-      else
-        options[:last_word_connector] ||= skip_last_comma ? default_two_words_connector : default_last_word_connector
-      end
-    end
 
     options.assert_valid_keys(:words_connector, :two_words_connector, :last_word_connector, :locale)
     options.reverse_merge! :words_connector => default_words_connector, :two_words_connector => default_two_words_connector, :last_word_connector => default_last_word_connector
@@ -38,22 +26,6 @@ class Array
       else
         "#{self[0...-1].join(options[:words_connector])}#{options[:last_word_connector]}#{self[-1]}"
     end
-  end
-
-
-  # Calls <tt>to_param</tt> on all its elements and joins the result with
-  # slashes. This is used by <tt>url_for</tt> in Action Pack.
-  def to_param
-    collect { |e| e.to_param }.join '/'
-  end
-
-  # Converts an array into a string suitable for use as a URL query string,
-  # using the given +key+ as the param name.
-  #
-  #   ['Rails', 'coding'].to_query('hobbies') # => "hobbies%5B%5D=Rails&hobbies%5B%5D=coding"
-  def to_query(key)
-    prefix = "#{key}[]"
-    collect { |value| value.to_query(prefix) }.join '&'
   end
 
   # Converts a collection of elements into a formatted string by calling
@@ -159,6 +131,7 @@ class Array
     raise "Not all elements respond to to_xml" unless all? { |e| e.respond_to? :to_xml }
     require 'builder' unless defined?(Builder)
 
+    options = options.dup
     options[:root]     ||= all? { |e| e.is_a?(first.class) && first.class.to_s != "Hash" } ? ActiveSupport::Inflector.pluralize(ActiveSupport::Inflector.underscore(first.class.name)) : "records"
     options[:children] ||= options[:root].singularize
     options[:indent]   ||= 2

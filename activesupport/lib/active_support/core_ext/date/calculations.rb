@@ -1,4 +1,7 @@
+require 'date'
 require 'active_support/duration'
+require 'active_support/core_ext/time/zones'
+require 'active_support/core_ext/object/acts_like'
 
 class Date
   class << self
@@ -82,6 +85,7 @@ class Date
   # Provides precise Date calculations for years, months, and days.  The +options+ parameter takes a hash with
   # any of these keys: <tt>:years</tt>, <tt>:months</tt>, <tt>:weeks</tt>, <tt>:days</tt>.
   def advance(options)
+    options = options.dup
     d = self
     d = d >> options.delete(:years) * 12 if options[:years]
     d = d >> options.delete(:months)     if options[:months]

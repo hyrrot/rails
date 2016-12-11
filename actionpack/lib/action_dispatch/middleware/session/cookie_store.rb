@@ -1,3 +1,6 @@
+require 'active_support/core_ext/hash/keys'
+require 'rack/request'
+
 module ActionDispatch
   module Session
     # This cookie-based session store is the Rails default. Sessions typically
@@ -48,6 +51,17 @@ module ActionDispatch
         :httponly     => true
       }.freeze
 
+      class OptionsHash < Hash
+        def initialize(by, env, default_options)
+          @session_data = env[CookieStore::ENV_SESSION_KEY]
+          default_options.each { |key, value| self[key] = value }
+        end
+
+        def [](key)
+          key == :id ? @session_data[:session_id] : super(key)
+        end
+      end
+
       ENV_SESSION_KEY = "rack.session".freeze
       ENV_SESSION_OPTIONS_KEY = "rack.session.options".freeze
       HTTP_SET_COOKIE = "Set-Cookie".freeze
@@ -88,7 +102,7 @@ module ActionDispatch
 
       def call(env)
         env[ENV_SESSION_KEY] = AbstractStore::SessionHash.new(self, env)
-        env[ENV_SESSION_OPTIONS_KEY] = @default_options.dup
+        env[ENV_SESSION_OPTIONS_KEY] = OptionsHash.new(self, env, @default_options)
 
         status, headers, body = @app.call(env)
 
@@ -165,7 +179,7 @@ module ActionDispatch
               'cookie containing the session data. Use ' +
               'config.action_controller.session = { :key => ' +
               '"_myapp_session", :secret => "some secret phrase" } in ' +
-              'config/environment.rb'
+              'config/application.rb'
           end
         end
 

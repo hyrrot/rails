@@ -46,16 +46,8 @@ end
 class PageCachingTest < ActionController::TestCase
   def setup
     super
+
     ActionController::Base.perform_caching = true
-
-    ActionController::Routing::Routes.clear!
-
-    ActionController::Routing::Routes.draw do |map|
-      map.main '', :controller => 'posts'
-      map.formatted_posts 'posts.:format', :controller => 'posts'
-      map.resources :posts
-      map.connect ':controller/:action/:id'
-    end
 
     @request = ActionController::TestRequest.new
     @request.host = 'hostname.com'
@@ -72,15 +64,20 @@ class PageCachingTest < ActionController::TestCase
 
   def teardown
     FileUtils.rm_rf(File.dirname(FILE_STORE_PATH))
-    ActionController::Routing::Routes.clear!
     ActionController::Base.perform_caching = false
   end
 
   def test_page_caching_resources_saves_to_correct_path_with_extension_even_if_default_route
-    @params[:format] = 'rss'
-    assert_equal '/posts.rss', @rewriter.rewrite(@params)
-    @params[:format] = nil
-    assert_equal '/', @rewriter.rewrite(@params)
+    with_routing do |set|
+      set.draw do |map|
+        match 'posts.:format', :to => 'posts#index', :as => :formatted_posts
+        match '/', :to => 'posts#index', :as => :main
+      end
+      @params[:format] = 'rss'
+      assert_equal '/posts.rss', @rewriter.rewrite(@params)
+      @params[:format] = nil
+      assert_equal '/', @rewriter.rewrite(@params)
+    end
   end
 
   def test_should_cache_get_with_ok_status
@@ -152,7 +149,9 @@ end
 
 class ActionCachingTestController < ActionController::Base
   rescue_from(Exception) { head 500 }
-  rescue_from(ActiveRecord::RecordNotFound) { head :not_found }
+  if defined? ActiveRecord
+    rescue_from(ActiveRecord::RecordNotFound) { head :not_found }
+  end
 
   caches_action :index, :redirected, :forbidden, :if => Proc.new { |c| !c.request.format.json? }, :expires_in => 1.hour
   caches_action :show, :cache_path => 'http://test.host/custom/show'
@@ -229,12 +228,16 @@ class ActionCachingMockController
     @mock_url_for
   end
 
+  def params
+    request.parameters
+  end
+
   def request
     mocked_path = @mock_path
     Object.new.instance_eval(<<-EVAL)
       def path; '#{@mock_path}' end
       def format; 'all' end
-      def cache_format; nil end
+      def parameters; {:format => nil}; end
       self
     EVAL
   end
@@ -419,8 +422,7 @@ class ActionCacheTest < ActionController::TestCase
   def test_xml_version_of_resource_is_treated_as_different_cache
     with_routing do |set|
       set.draw do |map|
-        map.connect ':controller/:action.:format'
-        map.connect ':controller/:action'
+        match ':controller(/:action(.:format))'
       end
 
       get :index, :format => 'xml'
@@ -444,8 +446,8 @@ class ActionCacheTest < ActionController::TestCase
 
   def test_correct_content_type_is_returned_for_cache_hit
     # run it twice to cache it the first time
-    get :index, :id => 'content-type.xml'
-    get :index, :id => 'content-type.xml'
+    get :index, :id => 'content-type', :format => 'xml'
+    get :index, :id => 'content-type', :format => 'xml'
     assert_equal 'application/xml', @response.content_type
   end
 
@@ -467,7 +469,7 @@ class ActionCacheTest < ActionController::TestCase
     @mock_controller.mock_url_for = 'http://example.org/'
     @mock_controller.mock_path    = '/'
 
-    assert_equal 'example.org/index', @path_class.path_for(@mock_controller, {})
+    assert_equal 'example.org/index', @path_class.new(@mock_controller, {}).path
   end
 
   def test_file_extensions
@@ -477,11 +479,13 @@ class ActionCacheTest < ActionController::TestCase
     assert_response :success
   end
 
-  def test_record_not_found_returns_404_for_multiple_requests
-    get :record_not_found
-    assert_response 404
-    get :record_not_found
-    assert_response 404
+  if defined? ActiveRecord
+    def test_record_not_found_returns_404_for_multiple_requests
+      get :record_not_found
+      assert_response 404
+      get :record_not_found
+      assert_response 404
+    end
   end
 
   def test_four_oh_four_returns_404_for_multiple_requests
@@ -536,7 +540,6 @@ class FragmentCachingTest < ActionController::TestCase
     @controller.params = @params
     @controller.request = @request
     @controller.response = @response
-    @controller.send(:initialize_current_url)
     @controller.send(:initialize_template_class, @response)
     @controller.send(:assign_shortcuts, @request, @response)
   end
@@ -608,7 +611,7 @@ class FragmentCachingTest < ActionController::TestCase
     @store.write('views/expensive', 'fragment content')
     fragment_computed = false
 
-    buffer = 'generated till now -> '
+    buffer = 'generated till now -> '.html_safe
     @controller.fragment_for(buffer, 'expensive') { fragment_computed = true }
 
     assert fragment_computed
@@ -619,12 +622,13 @@ class FragmentCachingTest < ActionController::TestCase
     @store.write('views/expensive', 'fragment content')
     fragment_computed = false
 
-    buffer = 'generated till now -> '
+    buffer = 'generated till now -> '.html_safe
     @controller.fragment_for(buffer, 'expensive') { fragment_computed = true }
 
     assert !fragment_computed
     assert_equal 'generated till now -> fragment content', buffer
   end
+
 end
 
 class FunctionalCachingController < ActionController::Base

@@ -17,10 +17,10 @@ class ArrayExtAccessTests < Test::Unit::TestCase
     assert_equal %w( a b c ), %w( a b c d ).to(2)
     assert_equal %w( a b c d ), %w( a b c d ).to(10)
   end
-  
+
   def test_second_through_tenth
     array = (1..42).to_a
-    
+
     assert_equal array[1], array.second
     assert_equal array[2], array.third
     assert_equal array[3], array.fourth
@@ -52,8 +52,6 @@ class ArrayExtToParamTests < Test::Unit::TestCase
 end
 
 class ArrayExtToSentenceTests < Test::Unit::TestCase
-  include ActiveSupport::Testing::Deprecation
-  
   def test_plain_array_to_sentence
     assert_equal "", [].to_sentence
     assert_equal "one", ['one'].to_sentence
@@ -62,28 +60,12 @@ class ArrayExtToSentenceTests < Test::Unit::TestCase
   end
 
   def test_to_sentence_with_words_connector
-    assert_deprecated(":connector has been deprecated. Use :words_connector instead") do
-      assert_equal "one, two, three", ['one', 'two', 'three'].to_sentence(:connector => '')
-    end
-    
-    assert_deprecated(":connector has been deprecated. Use :words_connector instead") do
-      assert_equal "one, two, and three", ['one', 'two', 'three'].to_sentence(:connector => 'and ')
-    end
-    
     assert_equal "one two, and three", ['one', 'two', 'three'].to_sentence(:words_connector => ' ')
     assert_equal "one & two, and three", ['one', 'two', 'three'].to_sentence(:words_connector => ' & ')
     assert_equal "onetwo, and three", ['one', 'two', 'three'].to_sentence(:words_connector => nil)
   end
 
   def test_to_sentence_with_last_word_connector
-    assert_deprecated(":skip_last_comma has been deprecated. Use :last_word_connector instead") do
-      assert_equal "one, two and three", ['one', 'two', 'three'].to_sentence(:skip_last_comma => true)
-    end
-    
-    assert_deprecated(":skip_last_comma has been deprecated. Use :last_word_connector instead") do
-      assert_equal "one, two, and three", ['one', 'two', 'three'].to_sentence(:skip_last_comma => false)
-    end
-    
     assert_equal "one, two, and also three", ['one', 'two', 'three'].to_sentence(:last_word_connector => ', and also ')
     assert_equal "one, twothree", ['one', 'two', 'three'].to_sentence(:last_word_connector => nil)
     assert_equal "one, two three", ['one', 'two', 'three'].to_sentence(:last_word_connector => ' ')
@@ -302,6 +284,13 @@ class ArrayToXmlTests < Test::Unit::TestCase
     xml = [].to_xml
     assert_match(/type="array"\/>/, xml)
   end
+
+  def test_to_xml_dups_options
+    options = {:skip_instruct => true}
+    [].to_xml(options)
+    # :builder, etc, shouldn't be added to options
+    assert_equal({:skip_instruct => true}, options)
+  end
 end
 
 class ArrayExtractOptionsTests < Test::Unit::TestCase
@@ -310,6 +299,28 @@ class ArrayExtractOptionsTests < Test::Unit::TestCase
     assert_equal({}, [1].extract_options!)
     assert_equal({:a=>:b}, [{:a=>:b}].extract_options!)
     assert_equal({:a=>:b}, [1, {:a=>:b}].extract_options!)
+  end
+end
+
+class ArrayUniqByTests < Test::Unit::TestCase
+  def test_uniq_by
+    assert_equal [1,2], [1,2,3,4].uniq_by { |i| i.odd? }
+    assert_equal [1,2], [1,2,3,4].uniq_by(&:even?)
+    assert_equal (-5..0).to_a, (-5..5).to_a.uniq_by{ |i| i**2 }
+  end
+
+  def test_uniq_by!
+    a = [1,2,3,4]
+    a.uniq_by! { |i| i.odd? }
+    assert_equal [1,2], a
+
+    a = [1,2,3,4]
+    a.uniq_by! { |i| i.even? }
+    assert_equal [1,2], a
+
+    a = (-5..5).to_a
+    a.uniq_by! { |i| i**2 }
+    assert_equal (-5..0).to_a, a
   end
 end
 
@@ -330,6 +341,11 @@ class ArrayWrapperTests < Test::Unit::TestCase
     def to_ary
       ["foo", "bar"]
     end
+  end
+
+  class Proxy
+    def initialize(target) @target = target end
+    def method_missing(*a) @target.send(*a) end
   end
 
   def test_array
@@ -356,5 +372,20 @@ class ArrayWrapperTests < Test::Unit::TestCase
 
   def test_object_with_to_ary
     assert_equal ["foo", "bar"], Array.wrap(FakeCollection.new)
+  end
+
+  def test_proxy_object
+    p = Proxy.new(Object.new)
+    assert_equal [p], Array.wrap(p)
+  end
+
+  def test_proxy_to_object_with_to_ary
+    p = Proxy.new(FakeCollection.new)
+    assert_equal [p], Array.wrap(p)
+  end
+
+  def test_struct
+    o = Struct.new(:foo).new(123)
+    assert_equal [o], Array.wrap(o)
   end
 end

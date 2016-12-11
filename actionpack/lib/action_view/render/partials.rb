@@ -170,133 +170,182 @@ module ActionView
   #     <%- end -%>
   #   <% end %>
   module Partials
-    extend ActiveSupport::Memoizable
     extend ActiveSupport::Concern
-    
-    included do
-      attr_accessor :_partial      
-    end
 
-    def _render_partial_from_controller(*args)
-      @assigns_added = false
-      _render_partial(*args)
-    end
+    class PartialRenderer
+      PARTIAL_NAMES = Hash.new {|h,k| h[k] = {} }
+      TEMPLATES = Hash.new {|h,k| h[k] = {} }
 
-    def _render_partial(options = {}) #:nodoc:
-      options[:locals] ||= {}
+      attr_reader :template
 
-      case path = partial = options[:partial]
-      when *_array_like_objects
-        return _render_partial_collection(partial, options)
-      else
-        if partial.is_a?(ActionView::Helpers::FormBuilder)
-          path = partial.class.to_s.demodulize.underscore.sub(/_builder$/, '')
-          options[:locals].merge!(path.to_sym => partial)
-        elsif !partial.is_a?(String)
-          options[:object] = object = partial
-          path = ActionController::RecordIdentifier.partial_path(object, controller_path)
-        end
-        _, _, prefix, object = parts = partial_parts(path, options)
-        parts[1] = {:formats => parts[1]}
-        template = find_by_parts(*parts)
-        _render_partial_object(template, options, (object unless object == true))
+      def initialize(view_context, options, block)
+        @view           = view_context
+        @partial_names  = PARTIAL_NAMES[@view.controller.class]
+
+        key = Thread.current[:format_locale_key]
+        @templates      = TEMPLATES[key] if key
+
+        setup(options, block)
       end
-    end
+
+      def setup(options, block)
+        partial = options[:partial]
+
+        @options = options
+        @locals  = options[:locals] || {}
+        @block   = block
+
+        if String === partial
+          @object     = options[:object]
+          @path       = partial
+          @collection = collection
+        else
+          @object = partial
+
+          if @collection = collection
+            paths = @collection_paths = @collection.map { |o| partial_path(o) }
+            @path = paths.uniq.size == 1 ? paths.first : nil
+          else
+            @path = partial_path
+          end
+        end
+      end
+
+      def render
+        identifier = ((@template = find_template) ? @template.identifier : @path)
+
+        if @collection
+          ActiveSupport::Notifications.instrument("action_view.render_collection",
+            :identifier => identifier || "collection", :count => @collection.size) do
+            render_collection
+          end
+        else
+          content = ActiveSupport::Notifications.instrument("action_view.render_partial",
+            :identifier => identifier) do
+            render_partial
+          end
+
+          if !@block && (layout = @options[:layout])
+            content = @view._render_layout(find_template(layout), @locals){ content }
+          end
+          content
+        end
+      end
+
+      def render_collection
+        return nil if @collection.blank?
+
+        if @options.key?(:spacer_template)
+          spacer = find_template(@options[:spacer_template]).render(@view, @locals)
+        end
+
+        result = @template ? collection_with_template : collection_without_template
+        result.join(spacer).html_safe
+      end
+
+      def collection_with_template(template = @template)
+        segments, locals, as = [], @locals, @options[:as] || template.variable_name
+
+        counter_name  = template.counter_name
+        locals[counter_name] = -1
+
+        @collection.each do |object|
+          locals[counter_name] += 1
+          locals[as] = object
+
+          segments << template.render(@view, locals)
+        end
+
+        @template = template
+        segments
+      end
+
+      def collection_without_template(collection_paths = @collection_paths)
+        segments, locals, as = [], @locals, @options[:as]
+        index, template = -1, nil
+
+        @collection.each_with_index do |object, i|
+          template = find_template(collection_paths[i])
+          locals[template.counter_name] = (index += 1)
+          locals[as || template.variable_name] = object
+
+          segments << template.render(@view, locals)
+        end
+
+        @template = template
+        segments
+      end
+
+      def render_partial(object = @object)
+        locals, view = @locals, @view
+
+        object ||= locals[template.variable_name]
+        locals[@options[:as] || template.variable_name] = object
+
+        template.render(view, locals) do |*name|
+          view._layout_for(*name, &@block)
+        end
+      end
 
     private
-      def partial_parts(name, options)
-        segments = name.split("/")
-        parts = segments.pop.split(".")
-
-        case parts.size
-        when 1
-          parts
-        when 2, 3
-          extension = parts.delete_at(1).to_sym
-          if formats.include?(extension)
-            self.formats.replace [extension]
-          end
-          parts.pop if parts.size == 2
+      def collection
+        if @object.respond_to?(:to_ary)
+          @object
+        elsif @options.key?(:collection)
+          @options[:collection] || []
         end
-
-        path = parts.join(".")
-        prefix = segments[0..-1].join("/")
-        prefix = prefix.blank? ? controller_path : prefix
-        parts = [path, formats, prefix]
-        parts.push options[:object] || true
       end
 
-      def _render_partial_with_block(layout, block, options)
-        @_proc_for_layout = block
-        concat(_render_partial(options.merge(:partial => layout)))
-      ensure
-        @_proc_for_layout = nil
-      end
-
-      def _render_partial_with_layout(layout, options)
-        if layout
-          prefix = controller && !layout.include?("/") ? controller.controller_path : nil
-          layout = find_by_parts(layout, {:formats => formats}, prefix, true)
-        end
-        content = _render_partial(options)
-        return _render_content_with_layout(content, layout, options[:locals])
-      end
-
-      def _array_like_objects
-        array_like = [Array]
-        if defined?(ActiveRecord)
-          array_like.push(ActiveRecord::Associations::AssociationCollection, ActiveRecord::NamedScope::Scope)
-        end
-        array_like
-      end
-
-      def _render_partial_object(template, options, object = nil)
-        if options.key?(:collection)
-          _render_partial_collection(options.delete(:collection), options, template)
+      def find_template(path = @path)
+        unless @templates
+          path && _find_template(path)
         else
-          locals = (options[:locals] ||= {})
-          object ||= locals[:object] || locals[template.variable_name]
-          
-          _set_locals(object, locals, template, options)
-          
-          options[:_template] = template
-          
-          _render_template(template, locals)
+          path && @templates[path] ||= _find_template(path)
         end
       end
 
-      def _set_locals(object, locals, template, options)
-        locals[:object] = locals[template.variable_name] = object
-        locals[options[:as]] = object if options[:as]
+      def _find_template(path)
+        if controller = @view.controller
+          prefix = controller.controller_path unless path.include?(?/)
+        end
+
+        @view.find(path, {:formats => @view.formats}, prefix, true)
       end
 
-      def _render_partial_collection(collection, options = {}, passed_template = nil) #:nodoc:
-        return nil if collection.blank?
-        
-        spacer = options[:spacer_template] ? _render_partial(:partial => options[:spacer_template]) : ''
+      def partial_path(object = @object)
+        @partial_names[object.class] ||= begin
+          object = object.to_model if object.respond_to?(:to_model)
 
-        locals = (options[:locals] ||= {})
-        index, @_partial_path = 0, nil
-        collection.map do |object|
-          options[:_template] = template = passed_template || begin
-            _partial_path = 
-              ActionController::RecordIdentifier.partial_path(object, controller_path)
-            template = _pick_partial_template(_partial_path)
+          object.class.model_name.partial_path.dup.tap do |partial|
+            path = @view.controller_path
+            partial.insert(0, "#{File.dirname(path)}/") if path.include?(?/)
           end
+        end
+      end
+    end
 
-          _set_locals(object, locals, template, options)
-          locals[template.counter_name] = index
-          
-          index += 1
-          
-          _render_template(template, locals)
-        end.join(spacer)
+    def render_partial(options)
+      _evaluate_assigns_and_ivars
+
+      details = options[:_details]
+
+      # Is this needed
+      self.formats = details[:formats] if details
+      renderer = PartialRenderer.new(self, options, nil)
+      text = renderer.render
+      options[:_template] = renderer.template
+      text
+    end
+
+    def _render_partial(options, &block) #:nodoc:
+      if defined? @renderer
+        @renderer.setup(options, block)
+      else
+        @renderer = PartialRenderer.new(self, options, block)
       end
 
-      def _pick_partial_template(partial_path) #:nodoc:
-        prefix = controller_path unless partial_path.include?('/')
-        find_by_parts(partial_path, {:formats => formats}, prefix, true)
-      end
-      memoize :_pick_partial_template
+      @renderer.render
+    end
+
   end
 end

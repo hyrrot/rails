@@ -1,11 +1,11 @@
 =begin
   heavily based on Masao Mutoh's gettext String interpolation extension
   http://github.com/mutoh/gettext/blob/f6566738b981fe0952548c421042ad1e0cdfb31e/lib/gettext/core_ext/string.rb
-  Copyright (C) 2005-2009 Masao Mutoh
+  Copyright (C) 2005-2010 Masao Mutoh
   You may redistribute it and/or modify it under the same license terms as Ruby.
 =end
 
-if RUBY_VERSION < '1.9'
+if RUBY_VERSION < '1.9' && !"".respond_to?(:interpolate_without_ruby_19_syntax)
 
   # KeyError is raised by String#% when the string contains a named placeholder
   # that is not contained in the given arguments hash. Ruby 1.9 includes and
@@ -24,8 +24,6 @@ if RUBY_VERSION < '1.9'
   # the meaning of the msgids using "named argument" instead of %s/%d style.
 
   class String
-    # For older ruby versions, such as ruby-1.8.5
-    alias :bytesize :size unless instance_methods.find {|m| m.to_s == 'bytesize'}
     alias :interpolate_without_ruby_19_syntax :% # :nodoc:
 
     INTERPOLATION_PATTERN = Regexp.union(

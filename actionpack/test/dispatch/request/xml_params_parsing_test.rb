@@ -38,6 +38,21 @@ class XmlParamsParsingTest < ActionController::IntegrationTest
     end
   end
 
+  test "logs error if parsing unsuccessful" do
+    with_test_routing do
+      begin
+        $stderr = StringIO.new
+        xml = "<person><name>David</name><avatar type='file' name='me.jpg' content_type='image/jpg'>#{ActiveSupport::Base64.encode64('ABC')}</avatar></pineapple>"
+        post "/parse", xml, default_headers.merge('action_dispatch.show_exceptions' => true)
+        assert_response :error
+        $stderr.rewind && err = $stderr.read
+        assert err =~ /Error occurred while parsing request parameters/
+      ensure
+        $stderr = STDERR
+      end
+    end
+  end
+
   test "parses multiple files" do
     xml = <<-end_body
       <person>
@@ -69,7 +84,7 @@ class XmlParamsParsingTest < ActionController::IntegrationTest
     def with_test_routing
       with_routing do |set|
         set.draw do |map|
-          map.connect ':action', :controller => "xml_params_parsing_test/test"
+          match ':action', :to => ::XmlParamsParsingTest::TestController
         end
         yield
       end

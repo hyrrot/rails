@@ -1,3 +1,4 @@
+require 'active_support/core_ext/kernel/reporting'
 require 'active_support/core_ext/object/blank'
 
 # = XmlMini ReXML implementation
@@ -18,13 +19,13 @@ module ActiveSupport
       if !data.respond_to?(:read)
         data = StringIO.new(data || '')
       end
-      
+
       char = data.getc
       if char.nil?
         {}
       else
         data.ungetc(char)
-        require 'rexml/document' unless defined?(REXML::Document)
+        silence_warnings { require 'rexml/document' } unless defined?(REXML::Document)
         doc = REXML::Document.new(data)
         merge_element!({}, doc.root)
       end

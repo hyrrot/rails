@@ -29,8 +29,10 @@ module Rails
       end
 
       def framework_version(framework)
-        require "#{framework}/version"
-        "#{framework.classify}::VERSION::STRING".constantize
+        if Object.const_defined?(framework.classify)
+          require "#{framework}/version"
+          "#{framework.classify}::VERSION::STRING".constantize
+        end
       end
 
       def edge_rails_revision(info = git_info)
@@ -49,9 +51,12 @@ module Rails
 
       def to_s
         column_width = properties.names.map {|name| name.length}.max
-        ["About your application's environment", *properties.map do |property|
-          "%-#{column_width}s   %s" % property
-        end] * "\n"
+        info = properties.map do |name, value|
+          value = value.join(", ") if value.is_a?(Array)
+          "%-#{column_width}s   %s" % [name, value]
+        end
+        info.unshift "About your application's environment"
+        info * "\n"
       end
 
       alias inspect to_s
@@ -73,7 +78,7 @@ module Rails
 
       protected
         def rails_vendor_root
-          @rails_vendor_root ||= "#{RAILS_ROOT}/vendor/rails"
+          @rails_vendor_root ||= "#{Rails.root}/vendor/rails"
         end
 
         def git_info
@@ -112,7 +117,7 @@ module Rails
     end
 
     property 'Middleware' do
-      ActionController::Dispatcher.middleware.active.map {|middle| middle.inspect }
+      Rails.configuration.middleware.active.map(&:inspect)
     end
 
     # The Rails Git revision, if it's checked out into vendor/rails.
@@ -122,17 +127,17 @@ module Rails
 
     # The application's location on the filesystem.
     property 'Application root' do
-      File.expand_path(RAILS_ROOT)
+      File.expand_path(Rails.root)
     end
 
     # The current Rails environment (development, test, or production).
     property 'Environment' do
-      RAILS_ENV
+      Rails.env
     end
 
     # The name of the database adapter for the current environment.
     property 'Database adapter' do
-      ActiveRecord::Base.configurations[RAILS_ENV]['adapter']
+      ActiveRecord::Base.configurations[Rails.env]['adapter']
     end
 
     property 'Database schema version' do

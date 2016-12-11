@@ -2,6 +2,8 @@ require "cases/helper"
 require 'models/company'
 require 'models/topic'
 require 'models/edge'
+require 'models/club'
+require 'models/organization'
 
 Company.has_many :accounts
 
@@ -25,10 +27,10 @@ class CalculationsTest < ActiveRecord::TestCase
   def test_should_return_nil_as_average
     assert_nil NumericData.average(:bank_balance)
   end
-  
+
   def test_type_cast_calculated_value_should_convert_db_averages_of_fixnum_class_to_decimal
-    assert_equal 0, NumericData.send(:type_cast_calculated_value, 0, nil, 'avg')
-    assert_equal 53.0, NumericData.send(:type_cast_calculated_value, 53, nil, 'avg')
+    assert_equal 0, NumericData.scoped.send(:type_cast_calculated_value, 0, nil, 'avg')
+    assert_equal 53.0, NumericData.scoped.send(:type_cast_calculated_value, 53, nil, 'avg')
   end
 
   def test_should_get_maximum_of_field
@@ -40,7 +42,7 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def test_should_get_maximum_of_field_with_scoped_include
-    Account.with_scope :find => { :include => :firm, :conditions => "companies.name != 'Summit'" } do
+    Account.send :with_scope, :find => { :include => :firm, :conditions => "companies.name != 'Summit'" } do
       assert_equal 50, Account.maximum(:credit_limit)
     end
   end
@@ -223,6 +225,10 @@ class CalculationsTest < ActiveRecord::TestCase
     assert_equal 15, companies(:rails_core).companies.sum(:id)
   end
 
+  def test_should_sum_scoped_field_with_from
+    assert_equal Club.count, Organization.clubs.count
+  end
+
   def test_should_sum_scoped_field_with_conditions
     assert_equal 8,  companies(:rails_core).companies.sum(:id, :conditions => 'id > 7')
   end
@@ -238,25 +244,6 @@ class CalculationsTest < ActiveRecord::TestCase
                                                   :having => 'sum(id) > 7')
     assert_nil      c['Leetsoft']
     assert_equal 8, c['Jadedpixel']
-  end
-
-  def test_should_reject_invalid_options
-    assert_nothing_raised do
-      [:count, :sum].each do |func|
-        # empty options are valid
-        Company.send(:validate_calculation_options, func)
-        # these options are valid for all calculations
-        [:select, :conditions, :joins, :order, :group, :having, :distinct].each do |opt|
-          Company.send(:validate_calculation_options, func, opt => true)
-        end
-      end
-
-      # :include is only valid on :count
-      Company.send(:validate_calculation_options, :count, :include => true)
-    end
-
-    assert_raise(ArgumentError) { Company.send(:validate_calculation_options, :sum,   :foo => :bar) }
-    assert_raise(ArgumentError) { Company.send(:validate_calculation_options, :count, :foo => :bar) }
   end
 
   def test_should_count_selected_field_with_include
@@ -298,7 +285,15 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def test_should_sum_expression
-    assert_equal '636', Account.sum("2 * credit_limit")
+    # Oracle adapter returns floating point value 636.0 after SUM
+    if current_adapter?(:OracleAdapter)
+      assert_equal 636, Account.sum("2 * credit_limit")
+    elsif current_adapter?(:SQLite3Adapter)
+      # Future versions of the SQLite3 adapter will return a number
+      assert_equal 636, Account.sum("2 * credit_limit").to_i
+    else
+      assert_equal '636', Account.sum("2 * credit_limit")
+    end
   end
 
   def test_count_with_from_option

@@ -1,4 +1,4 @@
-require 'activemodel'
+require 'active_model'
 
 class Person
   include ActiveModel::Conversion
@@ -16,7 +16,7 @@ class Person
     @persisted = true
   end
 
-  def new_record?
+  def persisted?
     @persisted
   end
 end

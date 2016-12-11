@@ -1,4 +1,5 @@
 require 'memcache'
+require 'active_support/core_ext/array/extract_options'
 
 module ActiveSupport
   module Cache
@@ -38,6 +39,11 @@ module ActiveSupport
       #
       # If no addresses are specified, then MemCacheStore will connect to
       # localhost port 11211 (the default memcached port).
+      #
+      # Instead of addresses one can pass in a MemCache-like object. For example:
+      #
+      #   require 'memcached' # gem install memcached; uses C bindings to libmemcached
+      #   ActiveSupport::Cache::MemCacheStore.new(Memcached::Rails.new("localhost:11211"))
       def initialize(*addresses)
         if addresses.first.respond_to?(:get)
           @data = addresses.first
@@ -54,8 +60,9 @@ module ActiveSupport
       end
 
       def read(key, options = nil) # :nodoc:
-        super
-        @data.get(key, raw?(options))
+        super do
+          @data.get(key, raw?(options))
+        end
       rescue MemCache::MemCacheError => e
         logger.error("MemCacheError (#{e}): #{e.message}")
         nil
@@ -69,22 +76,24 @@ module ActiveSupport
       # - <tt>:expires_in</tt> - the number of seconds that this value may stay in
       #   the cache. See ActiveSupport::Cache::Store#write for an example.
       def write(key, value, options = nil)
-        super
-        method = options && options[:unless_exist] ? :add : :set
-        # memcache-client will break the connection if you send it an integer
-        # in raw mode, so we convert it to a string to be sure it continues working.
-        value = value.to_s if raw?(options)
-        response = @data.send(method, key, value, expires_in(options), raw?(options))
-        response == Response::STORED
+        super do
+          method = options && options[:unless_exist] ? :add : :set
+          # memcache-client will break the connection if you send it an integer
+          # in raw mode, so we convert it to a string to be sure it continues working.
+          value = value.to_s if raw?(options)
+          response = @data.send(method, key, value, expires_in(options), raw?(options))
+          response == Response::STORED
+        end
       rescue MemCache::MemCacheError => e
         logger.error("MemCacheError (#{e}): #{e.message}")
         false
       end
 
       def delete(key, options = nil) # :nodoc:
-        super
-        response = @data.delete(key, expires_in(options))
-        response == Response::DELETED
+        super do
+          response = @data.delete(key, expires_in(options))
+          response == Response::DELETED
+        end
       rescue MemCache::MemCacheError => e
         logger.error("MemCacheError (#{e}): #{e.message}")
         false
@@ -94,21 +103,26 @@ module ActiveSupport
         # Doesn't call super, cause exist? in memcache is in fact a read
         # But who cares? Reading is very fast anyway
         # Local cache is checked first, if it doesn't know then memcache itself is read from
-        !read(key, options).nil?
+        super do
+          !read(key, options).nil?
+        end
       end
 
       def increment(key, amount = 1) # :nodoc:
-        log("incrementing", key, amount)
+        response = instrument(:increment, key, :amount => amount) do
+          @data.incr(key, amount)
+        end
 
-        response = @data.incr(key, amount)
         response == Response::NOT_FOUND ? nil : response
       rescue MemCache::MemCacheError
         nil
       end
 
       def decrement(key, amount = 1) # :nodoc:
-        log("decrement", key, amount)
-        response = @data.decr(key, amount)
+        response = instrument(:decrement, key, :amount => amount) do
+          @data.decr(key, amount)
+        end
+
         response == Response::NOT_FOUND ? nil : response
       rescue MemCache::MemCacheError
         nil

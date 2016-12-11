@@ -10,18 +10,6 @@ module Fun
   end
 end
 
-class MockLogger
-  attr_reader :logged
-
-  def initialize
-    @logged = []
-  end
-
-  def method_missing(method, *args)
-    @logged << args.first
-  end
-end
-
 class TestController < ActionController::Base
   protect_from_forgery
 
@@ -33,42 +21,51 @@ class TestController < ActionController::Base
   def hello_world
   end
 
+  def hello_world_file
+    render :file => File.expand_path("../../fixtures/hello.html", __FILE__)
+  end
+
   def conditional_hello
     if stale?(:last_modified => Time.now.utc.beginning_of_day, :etag => [:foo, 123])
       render :action => 'hello_world'
     end
   end
-  
+
   def conditional_hello_with_public_header
     if stale?(:last_modified => Time.now.utc.beginning_of_day, :etag => [:foo, 123], :public => true)
       render :action => 'hello_world'
     end
   end
-  
+
   def conditional_hello_with_public_header_and_expires_at
     expires_in 1.minute
     if stale?(:last_modified => Time.now.utc.beginning_of_day, :etag => [:foo, 123], :public => true)
       render :action => 'hello_world'
     end
   end
-  
+
   def conditional_hello_with_expires_in
-    expires_in 1.minute
+    expires_in 60.1.seconds
     render :action => 'hello_world'
   end
-  
+
   def conditional_hello_with_expires_in_with_public
     expires_in 1.minute, :public => true
     render :action => 'hello_world'
   end
-  
+
   def conditional_hello_with_expires_in_with_public_with_more_keys
     expires_in 1.minute, :public => true, 'max-stale' => 5.hours
     render :action => 'hello_world'
   end
-  
+
   def conditional_hello_with_expires_in_with_public_with_more_keys_old_syntax
     expires_in 1.minute, :public => true, :private => nil, 'max-stale' => 5.hours
+    render :action => 'hello_world'
+  end
+
+  def conditional_hello_with_expires_now
+    expires_now
     render :action => 'hello_world'
   end
 
@@ -221,6 +218,10 @@ class TestController < ActionController::Base
     render :text => false
   end
 
+  def render_text_with_resource
+    render :text => Customer.new("David")
+  end
+
   # :ported:
   def render_nothing_with_appendix
     render :text => "appended"
@@ -266,7 +267,7 @@ class TestController < ActionController::Base
   def builder_layout_test
     render :action => "hello", :layout => "layouts/builder"
   end
-  
+
   # :move: test this in ActionView
   def builder_partial_test
     render :action => "hello_world_container"
@@ -457,6 +458,10 @@ class TestController < ActionController::Base
     head :location => "/foo"
   end
 
+  def head_with_location_object
+    head :location => Customer.new("david", 1)
+  end
+
   def head_with_symbolic_status
     head :status => params[:status].intern
   end
@@ -479,10 +484,6 @@ class TestController < ActionController::Base
 
   def render_using_layout_around_block
     render :action => "using_layout_around_block"
-  end
-
-  def render_using_layout_around_block_with_args
-    render :action => "using_layout_around_block_with_args"
   end
 
   def render_using_layout_around_block_in_main_layout_and_within_content_for_layout
@@ -617,6 +618,7 @@ class TestController < ActionController::Base
   end
 
   private
+
     def determine_layout
       case action_name
         when "hello_world", "layout_test", "rendering_without_layout",
@@ -753,6 +755,11 @@ class RenderTest < ActionController::TestCase
     assert_equal "The secret is in the sauce\n", @response.body
   end
 
+  def test_render_file
+    get :hello_world_file
+    assert_equal "Hello world!", @response.body
+  end
+
   # :ported:
   def test_render_file_as_string_with_instance_variables
     get :render_file_as_string_with_instance_variables
@@ -823,6 +830,11 @@ class RenderTest < ActionController::TestCase
     assert_equal 'appended', @response.body
   end
 
+  def test_render_text_with_resource
+    get :render_text_with_resource
+    assert_equal 'name: "David"', @response.body
+  end
+
   # :ported:
   def test_attempt_to_access_object_method
     assert_raise(ActionController::UnknownAction, "No action responded to [clone]") { get :clone }
@@ -853,7 +865,7 @@ class RenderTest < ActionController::TestCase
   # :ported:
   def test_access_to_controller_name_in_view
     get :accessing_controller_name_in_template
-    assert_equal "test", @response.body # name is explicitly set to 'test' inside the controller.
+    assert_equal "test", @response.body # name is explicitly set in the controller.
   end
 
   # :ported:
@@ -1048,7 +1060,7 @@ class RenderTest < ActionController::TestCase
 
   def test_action_talk_to_layout
     get :action_talk_to_layout
-    assert_equal "<title>Talking to the layout</title>\nAction was here!", @response.body
+    assert_equal "<title>Talking to the layout</title>\n\nAction was here!", @response.body
   end
 
   # :addressed:
@@ -1083,6 +1095,20 @@ class RenderTest < ActionController::TestCase
     assert_response :ok
   end
 
+  def test_head_with_location_object
+    with_routing do |set|
+      set.draw do |map|
+        resources :customers
+        match ':controller/:action'
+      end
+
+      get :head_with_location_object
+      assert @response.body.blank?
+      assert_equal "http://www.nextangle.com/customers/1", @response.headers["Location"]
+      assert_response :ok
+    end
+  end
+
   def test_head_with_custom_header
     get :head_with_custom_header
     assert @response.body.blank?
@@ -1104,7 +1130,7 @@ class RenderTest < ActionController::TestCase
     assert !@response.headers.include?('Content-Length')
     assert_response :no_content
 
-    ActionDispatch::StatusCodes::SYMBOL_TO_STATUS_CODE.each do |status, code|
+    Rack::Utils::SYMBOL_TO_STATUS_CODE.each do |status, code|
       get :head_with_symbolic_status, :status => status.to_s
       assert_equal code, @response.response_code
       assert_response status
@@ -1112,7 +1138,7 @@ class RenderTest < ActionController::TestCase
   end
 
   def test_head_with_integer_status
-    ActionDispatch::StatusCodes::STATUS_CODES.each do |code, message|
+    Rack::Utils::HTTP_STATUS_CODES.each do |code, message|
       get :head_with_integer_status, :status => code.to_s
       assert_equal message, @response.message
     end
@@ -1141,11 +1167,6 @@ class RenderTest < ActionController::TestCase
   def test_using_layout_around_block_in_main_layout_and_within_content_for_layout
     get :render_using_layout_around_block_in_main_layout_and_within_content_for_layout
     assert_equal "Before (Anthony)\nInside from first block in layout\nAfter\nBefore (David)\nInside from block\nAfter\nBefore (Ramm)\nInside from second block in layout\nAfter\n", @response.body
-  end
-
-  def test_using_layout_around_block_with_args
-    get :render_using_layout_around_block_with_args
-    assert_equal "Before\narg1arg2\nAfter", @response.body
   end
 
   def test_partial_only
@@ -1219,7 +1240,6 @@ class RenderTest < ActionController::TestCase
   def test_partial_collection_with_spacer
     get :partial_collection_with_spacer
     assert_equal "Hello: davidonly partialHello: mary", @response.body
-    assert_template :partial => 'test/_partial_only'
     assert_template :partial => '_customer'
   end
 
@@ -1291,25 +1311,30 @@ class ExpiresInRenderTest < ActionController::TestCase
   def setup
     @request.host = "www.nextangle.com"
   end
-  
+
   def test_expires_in_header
     get :conditional_hello_with_expires_in
     assert_equal "max-age=60, private", @response.headers["Cache-Control"]
   end
-  
+
   def test_expires_in_header_with_public
     get :conditional_hello_with_expires_in_with_public
     assert_equal "max-age=60, public", @response.headers["Cache-Control"]
   end
-  
+
   def test_expires_in_header_with_additional_headers
     get :conditional_hello_with_expires_in_with_public_with_more_keys
     assert_equal "max-age=60, public, max-stale=18000", @response.headers["Cache-Control"]
   end
-  
+
   def test_expires_in_old_syntax
     get :conditional_hello_with_expires_in_with_public_with_more_keys_old_syntax
     assert_equal "max-age=60, public, max-stale=18000", @response.headers["Cache-Control"]
+  end
+
+  def test_expires_now
+    get :conditional_hello_with_expires_now
+    assert_equal "no-cache", @response.headers["Cache-Control"]
   end
 end
 
@@ -1331,7 +1356,7 @@ class EtagRenderTest < ActionController::TestCase
   def test_render_200_should_set_etag
     get :render_hello_world_from_variable
     assert_equal etag_for("hello david"), @response.headers['ETag']
-    assert_equal "private, max-age=0, must-revalidate", @response.headers['Cache-Control']
+    assert_equal "max-age=0, private, must-revalidate", @response.headers['Cache-Control']
   end
 
   def test_render_against_etag_request_should_304_when_match
@@ -1405,12 +1430,12 @@ class EtagRenderTest < ActionController::TestCase
     get :conditional_hello_with_bangs
     assert_response :not_modified
   end
-  
+
   def test_etag_with_public_true_should_set_header
     get :conditional_hello_with_public_header
     assert_equal "public", @response.headers['Cache-Control']
   end
-  
+
   def test_etag_with_public_true_should_set_header_and_retain_other_headers
     get :conditional_hello_with_public_header_and_expires_at
     assert_equal "max-age=60, public", @response.headers['Cache-Control']
@@ -1479,22 +1504,5 @@ class LastModifiedRenderTest < ActionController::TestCase
     @request.if_modified_since = 5.years.ago.httpdate
     get :conditional_hello_with_bangs
     assert_response :success
-  end
-end
-
-class RenderingLoggingTest < ActionController::TestCase
-  tests TestController
-
-  def setup
-    super
-    @request.host = "www.nextangle.com"
-  end
-
-  def test_logger_prints_layout_and_template_rendering_info
-    @controller.logger = MockLogger.new
-    get :layout_test
-    logged = @controller.logger.logged.find_all {|l| l =~ /render/i }
-    assert logged[0] =~ %r{Rendering.*test/hello_world}
-    assert logged[1] =~ %r{Rendering template within.*layouts/standard}
   end
 end

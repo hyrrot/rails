@@ -24,8 +24,9 @@ module ActiveModel
       #   # Same as above, just using explicit class references
       #   ActiveRecord::Base.observers = Cacher, GarbageCollector
       #
-      # Note: Setting this does not instantiate the observers yet. +instantiate_observers+ is
-      # called during startup, and before each development request.
+      # Note: Setting this does not instantiate the observers yet.
+      # +instantiate_observers+ is called during startup, and before
+      # each development request.
       def observers=(*values)
         @observers = values.flatten
       end
@@ -38,23 +39,6 @@ module ActiveModel
       # Instantiate the global Active Record observers.
       def instantiate_observers
         observers.each { |o| instantiate_observer(o) }
-      end
-
-      # Wraps methods with before and after notifications.
-      #
-      #   wrap_with_notifications :create, :save, :update, :destroy
-      def wrap_with_notifications(*methods)
-        methods.each do |method|
-          class_eval(<<-EOS, __FILE__, __LINE__ + 1)
-            def #{method}_with_notifications(*args, &block)
-              notify_observers(:before_#{method})
-              result = #{method}_without_notifications(*args, &block)
-              notify_observers(:after_#{method})
-              result
-            end
-          EOS
-          alias_method_chain(method, :notifications)
-        end
       end
 
       protected
@@ -119,10 +103,12 @@ module ActiveModel
   #
   # == Observing a class that can't be inferred
   #
-  # Observers will by default be mapped to the class with which they share a name. So CommentObserver will
-  # be tied to observing Comment, ProductManagerObserver to ProductManager, and so on. If you want to name your observer
-  # differently than the class you're interested in observing, you can use the Observer.observe class method which takes
-  # either the concrete class (Product) or a symbol for that class (:product):
+  # Observers will by default be mapped to the class with which they share a
+  # name. So CommentObserver will be tied to observing Comment, ProductManagerObserver
+  # to ProductManager, and so on. If you want to name your observer differently than
+  # the class you're interested in observing, you can use the Observer.observe class
+  # method which takes either the concrete class (Product) or a symbol for that
+  # class (:product):
   #
   #   class AuditObserver < ActiveModel::Observer
   #     observe :account
@@ -132,7 +118,8 @@ module ActiveModel
   #     end
   #   end
   #
-  # If the audit observer needs to watch more than one kind of object, this can be specified with multiple arguments:
+  # If the audit observer needs to watch more than one kind of object, this can be
+  # specified with multiple arguments:
   #
   #   class AuditObserver < ActiveModel::Observer
   #     observe :account, :balance
@@ -142,7 +129,8 @@ module ActiveModel
   #     end
   #   end
   #
-  # The AuditObserver will now act on both updates to Account and Balance by treating them both as records.
+  # The AuditObserver will now act on both updates to Account and Balance by treating
+  # them both as records.
   #
   class Observer
     include Singleton
@@ -161,7 +149,7 @@ module ActiveModel
       #
       #   class AuditObserver < ActiveModel::Observer
       #     def self.observed_classes
-      #       [AccountObserver, BalanceObserver]
+      #       [Account, Balance]
       #     end
       #   end
       def observed_classes

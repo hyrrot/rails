@@ -265,6 +265,18 @@ class HashExtTest < Test::Unit::TestCase
     assert_equal expected, hash_1
   end
 
+  def test_deep_merge_on_indifferent_access
+    hash_1 = HashWithIndifferentAccess.new({ :a => "a", :b => "b", :c => { :c1 => "c1", :c2 => "c2", :c3 => { :d1 => "d1" } } })
+    hash_2 = HashWithIndifferentAccess.new({ :a => 1, :c => { :c1 => 2, :c3 => { :d2 => "d2" } } })
+    hash_3 = { :a => 1, :c => { :c1 => 2, :c3 => { :d2 => "d2" } } }
+    expected = { "a" => 1, "b" => "b", "c" => { "c1" => 2, "c2" => "c2", "c3" => { "d1" => "d1", "d2" => "d2" } } }
+    assert_equal expected, hash_1.deep_merge(hash_2)
+    assert_equal expected, hash_1.deep_merge(hash_3)
+
+    hash_1.deep_merge!(hash_2)
+    assert_equal expected, hash_1
+  end
+
   def test_reverse_merge
     defaults = { :a => "x", :b => "y", :c => 10 }.freeze
     options  = { :a => 1, :b => 2 }
@@ -562,12 +574,12 @@ class HashToXmlTest < Test::Unit::TestCase
     EOT
 
     expected_topic_hash = {
-      :title      => nil, 
+      :title      => nil,
       :id         => nil,
       :approved   => nil,
       :written_on => nil,
       :viewed_at  => nil,
-      :content    => nil, 
+      :content    => nil,
       :parent_id  => nil
     }.stringify_keys
 
@@ -645,7 +657,7 @@ class HashToXmlTest < Test::Unit::TestCase
 
     assert_equal expected_topic_hash, Hash.from_xml(topic_xml)["rsp"]["photos"]["photo"]
   end
-  
+
   def test_all_caps_key_from_xml
     test_xml = <<-EOT
       <ABC3XYZ>
@@ -759,13 +771,13 @@ class HashToXmlTest < Test::Unit::TestCase
 
     assert_equal expected_bacon_hash, Hash.from_xml(bacon_xml)["bacon"]
   end
-  
+
   def test_type_trickles_through_when_unknown
     product_xml = <<-EOT
     <product>
       <weight type="double">0.5</weight>
       <image type="ProductImage"><filename>image.gif</filename></image>
-      
+
     </product>
     EOT
 
@@ -774,7 +786,7 @@ class HashToXmlTest < Test::Unit::TestCase
       :image => {'type' => 'ProductImage', 'filename' => 'image.gif' },
     }.stringify_keys
 
-    assert_equal expected_product_hash, Hash.from_xml(product_xml)["product"]    
+    assert_equal expected_product_hash, Hash.from_xml(product_xml)["product"]
   end
 
   def test_should_use_default_value_for_unknown_key
@@ -808,41 +820,41 @@ class HashToXmlTest < Test::Unit::TestCase
       assert_equal expected, hash.to_xml(@xml_options)
     end
   end
-  
-  def test_empty_string_works_for_typecast_xml_value    
+
+  def test_empty_string_works_for_typecast_xml_value
     assert_nothing_raised do
       Hash.__send__(:typecast_xml_value, "")
     end
   end
-  
+
   def test_escaping_to_xml
-    hash = { 
-      :bare_string        => 'First & Last Name', 
+    hash = {
+      :bare_string        => 'First & Last Name',
       :pre_escaped_string => 'First &amp; Last Name'
     }.stringify_keys
-    
+
     expected_xml = '<person><bare-string>First &amp; Last Name</bare-string><pre-escaped-string>First &amp;amp; Last Name</pre-escaped-string></person>'
     assert_equal expected_xml, hash.to_xml(@xml_options)
   end
-  
+
   def test_unescaping_from_xml
     xml_string = '<person><bare-string>First &amp; Last Name</bare-string><pre-escaped-string>First &amp;amp; Last Name</pre-escaped-string></person>'
-    expected_hash = { 
-      :bare_string        => 'First & Last Name', 
+    expected_hash = {
+      :bare_string        => 'First & Last Name',
       :pre_escaped_string => 'First &amp; Last Name'
     }.stringify_keys
     assert_equal expected_hash, Hash.from_xml(xml_string)['person']
   end
-  
+
   def test_roundtrip_to_xml_from_xml
-    hash = { 
-      :bare_string        => 'First & Last Name', 
+    hash = {
+      :bare_string        => 'First & Last Name',
       :pre_escaped_string => 'First &amp; Last Name'
     }.stringify_keys
 
     assert_equal hash, Hash.from_xml(hash.to_xml(@xml_options))['person']
   end
-  
+
   def test_datetime_xml_type_with_utc_time
     alert_xml = <<-XML
       <alert>
@@ -853,7 +865,7 @@ class HashToXmlTest < Test::Unit::TestCase
     assert alert_at.utc?
     assert_equal Time.utc(2008, 2, 10, 15, 30, 45), alert_at
   end
-  
+
   def test_datetime_xml_type_with_non_utc_time
     alert_xml = <<-XML
       <alert>
@@ -864,7 +876,7 @@ class HashToXmlTest < Test::Unit::TestCase
     assert alert_at.utc?
     assert_equal Time.utc(2008, 2, 10, 15, 30, 45), alert_at
   end
-  
+
   def test_datetime_xml_type_with_far_future_date
     alert_xml = <<-XML
       <alert>
@@ -880,48 +892,21 @@ class HashToXmlTest < Test::Unit::TestCase
     assert_equal 30,    alert_at.min
     assert_equal 45,    alert_at.sec
   end
-end
 
-class QueryTest < Test::Unit::TestCase
-  def test_simple_conversion
-    assert_query_equal 'a=10', :a => 10
-  end
-
-  def test_cgi_escaping
-    assert_query_equal 'a%3Ab=c+d', 'a:b' => 'c d'
-  end
-
-  def test_nil_parameter_value
-    empty = Object.new
-    def empty.to_param; nil end
-    assert_query_equal 'a=', 'a' => empty
-  end
-
-  def test_nested_conversion
-    assert_query_equal 'person%5Blogin%5D=seckar&person%5Bname%5D=Nicholas',
-      :person => {:name => 'Nicholas', :login => 'seckar'}
-  end
-
-  def test_multiple_nested
-    assert_query_equal 'account%5Bperson%5D%5Bid%5D=20&person%5Bid%5D=10',
-      :person => {:id => 10}, :account => {:person => {:id => 20}}
-  end
-
-  def test_array_values
-    assert_query_equal 'person%5Bid%5D%5B%5D=10&person%5Bid%5D%5B%5D=20',
-      :person => {:id => [10, 20]}
-  end
-
-  def test_array_values_are_not_sorted
-    assert_query_equal 'person%5Bid%5D%5B%5D=20&person%5Bid%5D%5B%5D=10',
-      :person => {:id => [20, 10]}
+  def test_to_xml_dups_options
+    options = {:skip_instruct => true}
+    {}.to_xml(options)
+    # :builder, etc, shouldn't be added to options
+    assert_equal({:skip_instruct => true}, options)
   end
 
   def test_expansion_count_is_limited
     expected = {
-      'ActiveSupport::XmlMini_REXML'    => 'RuntimeError',
-      'ActiveSupport::XmlMini_Nokogiri' => 'Nokogiri::XML::SyntaxError',
-      'ActiveSupport::XmlMini_LibXML'   => 'LibXML::XML::Error',
+      'ActiveSupport::XmlMini_REXML'       => 'RuntimeError',
+      'ActiveSupport::XmlMini_Nokogiri'    => 'Nokogiri::XML::SyntaxError',
+      'ActiveSupport::XmlMini_NokogiriSAX' => 'RuntimeError',
+      'ActiveSupport::XmlMini_LibXML'      => 'LibXML::XML::Error',
+      'ActiveSupport::XmlMini_LibXMLSAX'   => 'LibXML::XML::Error',
     }[ActiveSupport::XmlMini.backend.name].constantize
 
     assert_raise expected do
@@ -943,9 +928,4 @@ class QueryTest < Test::Unit::TestCase
       Hash.from_xml(attack_xml)
     end
   end
-
-  private
-    def assert_query_equal(expected, actual, message = nil)
-      assert_equal expected.split('&'), actual.to_query.split('&')
-    end
 end

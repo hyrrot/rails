@@ -108,6 +108,11 @@ XML
       head :created, :location => 'created resource'
     end
 
+    def delete_cookie
+      cookies.delete("foo")
+      render :nothing => true
+    end
+
     private
       def rescue_action(e)
         raise e
@@ -123,13 +128,6 @@ XML
     @controller = TestController.new
     @request    = ActionController::TestRequest.new
     @response   = ActionController::TestResponse.new
-    ActionController::Routing.use_controllers! %w(content admin/user test_test/test)
-    ActionController::Routing::Routes.load_routes!
-  end
-
-  def teardown
-    super
-    ActionController::Routing::Routes.reload
   end
 
   def test_raw_post_handling
@@ -458,8 +456,8 @@ XML
   def test_array_path_parameter_handled_properly
     with_routing do |set|
       set.draw do |map|
-        map.connect 'file/*path', :controller => 'test_test/test', :action => 'test_params'
-        map.connect ':controller/:action/:id'
+        match 'file/*path', :to => 'test_test/test#test_params'
+        match ':controller/:action'
       end
 
       get :test_params, :path => ['hello', 'world']
@@ -478,8 +476,8 @@ XML
   end
 
   def test_with_routing_places_routes_back
-    assert ActionController::Routing::Routes
-    routes_id = ActionController::Routing::Routes.object_id
+    assert ActionDispatch::Routing::Routes
+    routes_id = ActionDispatch::Routing::Routes.object_id
 
     begin
       with_routing { raise 'fail' }
@@ -487,8 +485,8 @@ XML
     rescue RuntimeError
     end
 
-    assert ActionController::Routing::Routes
-    assert_equal routes_id, ActionController::Routing::Routes.object_id
+    assert ActionDispatch::Routing::Routes
+    assert_equal routes_id, ActionDispatch::Routing::Routes.object_id
   end
 
   def test_remote_addr
@@ -517,6 +515,18 @@ XML
     @request.recycle!
     post :no_op
     assert @request.params[:foo].blank?
+  end
+
+  def test_should_have_knowledge_of_client_side_cookie_state_even_if_they_are_not_set
+    @request.cookies['foo'] = 'bar'
+    get :no_op
+    assert_equal 'bar', cookies['foo']
+  end
+
+  def test_should_detect_if_cookie_is_deleted
+    @request.cookies['foo'] = 'bar'
+    get :delete_cookie
+    assert_nil cookies['foo']
   end
 
   %w(controller response request).each do |variable|
@@ -553,7 +563,7 @@ XML
     expected = File.read(path)
     expected.force_encoding(Encoding::BINARY) if expected.respond_to?(:force_encoding)
 
-    file = ActionController::TestUploadedFile.new(path, content_type)
+    file = Rack::Test::UploadedFile.new(path, content_type)
     assert_equal filename, file.original_filename
     assert_equal content_type, file.content_type
     assert_equal file.path, file.local_path
@@ -570,10 +580,10 @@ XML
     path = "#{FILES_DIR}/#{filename}"
     content_type = 'image/png'
 
-    binary_uploaded_file = ActionController::TestUploadedFile.new(path, content_type, :binary)
+    binary_uploaded_file = Rack::Test::UploadedFile.new(path, content_type, :binary)
     assert_equal File.open(path, READ_BINARY).read, binary_uploaded_file.read
 
-    plain_uploaded_file = ActionController::TestUploadedFile.new(path, content_type)
+    plain_uploaded_file = Rack::Test::UploadedFile.new(path, content_type)
     assert_equal File.open(path, READ_PLAIN).read, plain_uploaded_file.read
   end
 
@@ -595,7 +605,7 @@ XML
   end
 
   def test_test_uploaded_file_exception_when_file_doesnt_exist
-    assert_raise(RuntimeError) { ActionController::TestUploadedFile.new('non_existent_file') }
+    assert_raise(RuntimeError) { Rack::Test::UploadedFile.new('non_existent_file') }
   end
 
   def test_redirect_url_only_cares_about_location_header
@@ -618,17 +628,6 @@ XML
       assert_nothing_raised(NoMethodError) { @response.binary_content }
     end
   end
-
-  protected
-    def with_foo_routing
-      with_routing do |set|
-        set.draw do |map|
-          map.generate_url 'foo', :controller => 'test'
-          map.connect      ':controller/:action/:id'
-        end
-        yield set
-      end
-    end
 end
 
 class InferringClassNameTest < ActionController::TestCase
@@ -663,7 +662,7 @@ class NamedRoutesControllerTest < ActionController::TestCase
 
   def test_should_be_able_to_use_named_routes_before_a_request_is_done
     with_routing do |set|
-      set.draw { |map| map.resources :contents }
+      set.draw { |map| resources :contents }
       assert_equal 'http://test.host/contents/new', new_content_url
       assert_equal 'http://test.host/contents/1', content_url(:id => 1)
     end

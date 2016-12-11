@@ -1,8 +1,6 @@
-$:.unshift(File.dirname(__FILE__) + '/../../lib')
-$:.unshift(File.dirname(__FILE__) + '/../../../activesupport/lib')
+require File.expand_path('../../../../load_paths', __FILE__)
 
 require 'config'
-
 require 'active_model'
 
 # Show backtraces for deprecated behavior for quicker cleanup.

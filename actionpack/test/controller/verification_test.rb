@@ -111,10 +111,6 @@ class VerificationTest < ActionController::TestCase
 
   tests TestController
 
-  setup do
-    ActionController::Routing::Routes.add_named_route :foo, '/foo', :controller => 'test', :action => 'foo'
-  end
-
   def test_using_symbol_back_with_no_referrer
     assert_raise(ActionController::RedirectBackError) { get :guarded_with_back }
   end
@@ -127,8 +123,14 @@ class VerificationTest < ActionController::TestCase
 
   def test_no_deprecation_warning_for_named_route
     assert_not_deprecated do
-      get :guarded_one_for_named_route_test, :two => "not one"
-      assert_redirected_to '/foo'
+      with_routing do |set|
+        set.draw do |map|
+          match 'foo', :to => 'test#foo', :as => :foo
+          match 'verification_test/:action', :to => ::VerificationTest::TestController
+        end
+        get :guarded_one_for_named_route_test, :two => "not one"
+        assert_redirected_to '/foo'
+      end
     end
   end
 
